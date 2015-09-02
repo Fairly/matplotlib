@@ -1,4 +1,4 @@
-# Makefile for matplotlib
+# Makefile for matplotlib haha
 
 PYTHON = `which python`
 VERSION = `${PYTHON} setup.py --version`

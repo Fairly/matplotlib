@@ -34,16 +34,17 @@ graphics contexts must implement to serve as a matplotlib backend
 
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
+
+import six
+from six.moves import xrange
+
 from contextlib import contextmanager
-
-from matplotlib.externals import six
-from matplotlib.externals.six.moves import xrange
-
+import importlib
+import io
 import os
 import sys
-import warnings
 import time
-import io
+import warnings
 
 import numpy as np
 import matplotlib.cbook as cbook
@@ -55,6 +56,7 @@ from matplotlib import rcParams
 from matplotlib import is_interactive
 from matplotlib import get_backend
 from matplotlib._pylab_helpers import Gcf
+from matplotlib import lines
 
 from matplotlib.transforms import Bbox, TransformedBbox, Affine2D
 
@@ -63,14 +65,6 @@ import matplotlib.textpath as textpath
 from matplotlib.path import Path
 from matplotlib.cbook import mplDeprecation, warn_deprecated
 import matplotlib.backend_tools as tools
-
-try:
-    from importlib import import_module
-except:
-    # simple python 2.6 implementation (no relative imports)
-    def import_module(name):
-        __import__(name)
-        return sys.modules[name]
 
 try:
     from PIL import Image
@@ -134,7 +128,7 @@ def get_registered_canvas_class(format):
         return None
     backend_class = _default_backends[format]
     if cbook.is_string_like(backend_class):
-        backend_class = import_module(backend_class).FigureCanvas
+        backend_class = importlib.import_module(backend_class).FigureCanvas
         _default_backends[format] = backend_class
     return backend_class
 
@@ -326,7 +320,7 @@ class RendererBase(object):
 
         if edgecolors is None:
             edgecolors = facecolors
-        linewidths = np.array([gc.get_linewidth()], np.float_)
+        linewidths = np.array([gc.get_linewidth()], float)
 
         return self.draw_path_collection(
             gc, master_transform, paths, [], offsets, offsetTrans, facecolors,
@@ -514,23 +508,34 @@ class RendererBase(object):
         """
         return 1.0
 
-    def draw_image(self, gc, x, y, im):
+    def draw_image(self, gc, x, y, im, transform=None):
         """
-        Draw the image instance into the current axes;
+        Draw an RGBA image.
 
         *gc*
-            a GraphicsContext containing clipping information
+            a :class:`GraphicsContextBase` instance with clipping information.
 
         *x*
-            is the distance in pixels from the left hand side of the canvas.
+            the distance in physical units (i.e., dots or pixels) from the left
+            hand side of the canvas.
 
         *y*
-            the distance from the origin.  That is, if origin is
-            upper, y is the distance from top.  If origin is lower, y
-            is the distance from bottom
+            the distance in physical units (i.e., dots or pixels) from the
+            bottom side of the canvas.
 
         *im*
-            the :class:`matplotlib._image.Image` instance
+            An NxMx4 array of RGBA pixels (of dtype uint8).
+
+        *transform*
+            If and only if the concrete backend is written such that
+            :meth:`option_scale_image` returns ``True``, an affine
+            transformation *may* be passed to :meth:`draw_image`. It takes the
+            form of a :class:`~matplotlib.transforms.Affine2DBase` instance.
+            The translation vector of the transformation is given in physical
+            units (i.e., dots or pixels). Note that the transformation does not
+            override `x` and `y`, and has to be applied *before* translating
+            the result by `x` and `y` (this can be accomplished by adding `x`
+            and `y` to the translation vector defined by `transform`).
         """
         raise NotImplementedError
 
@@ -543,8 +548,8 @@ class RendererBase(object):
 
     def option_scale_image(self):
         """
-        override this method for renderers that support arbitrary
-        scaling of image (most of the vector backend).
+        override this method for renderers that support arbitrary affine
+        transformations in :meth:`draw_image` (most vector backends).
         """
         return False
 
@@ -771,14 +776,6 @@ class GraphicsContextBase(object):
     An abstract base class that provides color, line styles, etc...
     """
 
-    # a mapping from dash styles to suggested offset, dash pairs
-    dashd = {
-        'solid': (None, None),
-        'dashed': (0, (6.0, 6.0)),
-        'dashdot': (0, (3.0, 5.0, 1.0, 5.0)),
-        'dotted': (0, (1.0, 3.0)),
-    }
-
     def __init__(self):
         self._alpha = 1.0
         self._forced_alpha = False  # if True, _alpha overrides A from RGBA
@@ -792,6 +789,7 @@ class GraphicsContextBase(object):
         self._linewidth = 1
         self._rgb = (0.0, 0.0, 0.0, 1.0)
         self._hatch = None
+        self._hatch_linewidth = rcParams['hatch.linewidth']
         self._url = None
         self._gid = None
         self._snap = None
@@ -1012,22 +1010,11 @@ class GraphicsContextBase(object):
         if self._forced_alpha and isRGBA:
             self._rgb = fg[:3] + (self._alpha,)
         elif self._forced_alpha:
-            self._rgb = colors.colorConverter.to_rgba(fg, self._alpha)
+            self._rgb = colors.to_rgba(fg, self._alpha)
         elif isRGBA:
             self._rgb = fg
         else:
-            self._rgb = colors.colorConverter.to_rgba(fg)
-
-    def set_graylevel(self, frac):
-        """
-        Set the foreground color to be a gray level with *frac*
-        """
-        # When removing, remember to remove all overrides in subclasses.
-        msg = ("set_graylevel is deprecated for removal in 1.6; "
-                "you can achieve the same result by using "
-                "set_foreground((frac, frac, frac))")
-        warnings.warn(msg, mplDeprecation)
-        self._rgb = (frac, frac, frac, self._alpha)
+            self._rgb = colors.to_rgba(fg)
 
     def set_joinstyle(self, js):
         """
@@ -1047,24 +1034,12 @@ class GraphicsContextBase(object):
     def set_linestyle(self, style):
         """
         Set the linestyle to be one of ('solid', 'dashed', 'dashdot',
-        'dotted'). One may specify customized dash styles by providing
-        a tuple of (offset, dash pairs). For example, the predefiend
-        linestyles have following values.:
-
-         'dashed'  : (0, (6.0, 6.0)),
-         'dashdot' : (0, (3.0, 5.0, 1.0, 5.0)),
-         'dotted'  : (0, (1.0, 3.0)),
+        'dotted'). These are defined in the rcParams
+        `lines.dashed_pattern`, `lines.dashdot_pattern` and
+        `lines.dotted_pattern`.  One may also specify customized dash
+        styles by providing a tuple of (offset, dash pairs).
         """
-
-        if style in self.dashd:
-            offset, dashes = self.dashd[style]
-        elif isinstance(style, tuple):
-            offset, dashes = style
-        else:
-            raise ValueError('Unrecognized linestyle: %s' % str(style))
-
         self._linestyle = style
-        self.set_dashes(offset, dashes)
 
     def set_url(self, url):
         """
@@ -1110,6 +1085,12 @@ class GraphicsContextBase(object):
         if self._hatch is None:
             return None
         return Path.hatch(self._hatch, density)
+
+    def get_hatch_linewidth(self):
+        """
+        Gets the linewidth to use for hatching.
+        """
+        return self._hatch_linewidth
 
     def get_sketch_params(self):
         """
@@ -1576,13 +1557,13 @@ class PickEvent(Event):
 
     Example usage::
 
-        line, = ax.plot(rand(100), 'o', picker=5)  # 5 points tolerance
+        ax.plot(np.rand(100), 'o', picker=5)  # 5 points tolerance
 
         def on_pick(event):
-            thisline = event.artist
-            xdata, ydata = thisline.get_data()
+            line = event.artist
+            xdata, ydata = line.get_data()
             ind = event.ind
-            print('on pick line:', zip(xdata[ind], ydata[ind]))
+            print('on pick line:', np.array([xdata[ind], ydata[ind]]).T)
 
         cid = fig.canvas.mpl_connect('pick_event', on_pick)
 
@@ -1678,6 +1659,8 @@ class FigureCanvasBase(object):
                          'Tagged Image File Format')
 
     def __init__(self, figure):
+        self._is_idle_drawing = True
+        self._is_saving = False
         figure.set_canvas(self)
         self.figure = figure
         # a dictionary from event name to a dictionary that maps cid->func
@@ -1690,7 +1673,6 @@ class FigureCanvasBase(object):
         self.scroll_pick_id = self.mpl_connect('scroll_event', self.pick)
         self.mouse_grabber = None  # the axes currently grabbing mouse
         self.toolbar = None  # NavigationToolbar2 will set me
-        self._is_saving = False
         self._is_idle_drawing = False
 
     @contextmanager
@@ -1733,53 +1715,6 @@ class FigureCanvasBase(object):
                     parent = p
                     break
             h = parent
-
-    def onHilite(self, ev):
-        """
-        Mouse event processor which highlights the artists
-        under the cursor.  Connect this to the 'motion_notify_event'
-        using::
-
-            canvas.mpl_connect('motion_notify_event',canvas.onHilite)
-        """
-        msg = ("onHilite has been deprecated in 1.5 and will be removed "
-               "in 1.6.  This function has not been used internally by mpl "
-               "since 2007.")
-        warnings.warn(msg, mplDeprecation)
-        if not hasattr(self, '_active'):
-            self._active = dict()
-
-        under = self.figure.hitlist(ev)
-        enter = [a for a in under if a not in self._active]
-        leave = [a for a in self._active if a not in under]
-        # On leave restore the captured colour
-        for a in leave:
-            if hasattr(a, 'get_color'):
-                a.set_color(self._active[a])
-            elif hasattr(a, 'get_edgecolor'):
-                a.set_edgecolor(self._active[a][0])
-                a.set_facecolor(self._active[a][1])
-            del self._active[a]
-        # On enter, capture the color and repaint the artist
-        # with the highlight colour.  Capturing colour has to
-        # be done first in case the parent recolouring affects
-        # the child.
-        for a in enter:
-            if hasattr(a, 'get_color'):
-                self._active[a] = a.get_color()
-            elif hasattr(a, 'get_edgecolor'):
-                self._active[a] = (a.get_edgecolor(), a.get_facecolor())
-            else:
-                self._active[a] = None
-        for a in enter:
-            if hasattr(a, 'get_color'):
-                a.set_color('red')
-            elif hasattr(a, 'get_edgecolor'):
-                a.set_edgecolor('red')
-                a.set_facecolor('lightblue')
-            else:
-                self._active[a] = None
-        self.draw_idle()
 
     def pick(self, mouseevent):
         if not self.widgetlock.locked():
@@ -2077,7 +2012,7 @@ class FigureCanvasBase(object):
                          'Supported formats: '
                          '%s.' % (format, ', '.join(formats)))
 
-    def print_figure(self, filename, dpi=None, facecolor='w', edgecolor='w',
+    def print_figure(self, filename, dpi=None, facecolor=None, edgecolor=None,
                      orientation='portrait', format=None, **kwargs):
         """
         Render the figure to hardcopy. Set the figure patch face and edge
@@ -2097,10 +2032,10 @@ class FigureCanvasBase(object):
             the dots per inch to save the figure in; if None, use savefig.dpi
 
         *facecolor*
-            the facecolor of the figure
+            the facecolor of the figure; if None, defaults to savefig.facecolor
 
         *edgecolor*
-            the edgecolor of the figure
+            the edgecolor of the figure; if None, defaults to savefig.edgecolor
 
         *orientation*
             landscape' | 'portrait' (not supported on all backends)
@@ -2122,6 +2057,8 @@ class FigureCanvasBase(object):
             tight bbox is calculated.
 
         """
+        self._is_saving = True
+
         if format is None:
             # get format from filename, or from backend's default filetype
             if cbook.is_string_like(filename):
@@ -2139,11 +2076,20 @@ class FigureCanvasBase(object):
         if dpi is None:
             dpi = rcParams['savefig.dpi']
 
+        if dpi == 'figure':
+            dpi = self.figure.dpi
+
+        if facecolor is None:
+            facecolor = rcParams['savefig.facecolor']
+        if edgecolor is None:
+            edgecolor = rcParams['savefig.edgecolor']
+
         origDPI = self.figure.dpi
         origfacecolor = self.figure.get_facecolor()
         origedgecolor = self.figure.get_edgecolor()
 
-        self.figure.dpi = dpi
+        if dpi != 'figure':
+            self.figure.dpi = dpi
         self.figure.set_facecolor(facecolor)
         self.figure.set_edgecolor(edgecolor)
 
@@ -2215,7 +2161,6 @@ class FigureCanvasBase(object):
         else:
             _bbox_inches_restore = None
 
-        self._is_saving = True
         try:
             #result = getattr(self, method_name)(
             result = print_method(
@@ -2420,10 +2365,6 @@ class FigureCanvasBase(object):
         functions for each of the GUI backends can be written.  As
         such, it throws a deprecated warning.
 
-        Call signature::
-
-            start_event_loop_default(self,timeout=0)
-
         This call blocks until a callback function triggers
         stop_event_loop() or *timeout* is reached.  If *timeout* is
         <=0, never timeout.
@@ -2448,9 +2389,6 @@ class FigureCanvasBase(object):
         loop so that interactive functions, such as ginput and
         waitforbuttonpress, can wait for events.
 
-        Call signature::
-
-          stop_event_loop_default(self)
         """
         self._looping = False
 
@@ -2483,9 +2421,10 @@ def key_press_handler(event, canvas, toolbar=None):
     save_keys = rcParams['keymap.save']
     quit_keys = rcParams['keymap.quit']
     grid_keys = rcParams['keymap.grid']
+    grid_minor_keys = rcParams['keymap.grid_minor']
     toggle_yscale_keys = rcParams['keymap.yscale']
     toggle_xscale_keys = rcParams['keymap.xscale']
-    all = rcParams['keymap.all_axes']
+    all_keys = rcParams['keymap.all_axes']
 
     # toggle fullscreen mode (default key 'f')
     if event.key in fullscreen_keys:
@@ -2525,44 +2464,96 @@ def key_press_handler(event, canvas, toolbar=None):
         return
 
     # these bindings require the mouse to be over an axes to trigger
+    def _get_uniform_gridstate(ticks):
+        # Return True/False if all grid lines are on or off, None if they are
+        # not all in the same state.
+        if all(tick.gridOn for tick in ticks):
+            return True
+        elif not any(tick.gridOn for tick in ticks):
+            return False
+        else:
+            return None
 
-    # switching on/off a grid in current axes (default key 'g')
-    if event.key in grid_keys:
-        event.inaxes.grid()
-        canvas.draw()
+    ax = event.inaxes
+    # toggle major grids in current axes (default key 'g')
+    # Both here and below (for 'G'), we do nothing if *any* grid (major or
+    # minor, x or y) is not in a uniform state, to avoid messing up user
+    # customization.
+    if (event.key in grid_keys
+            # Exclude minor grids not in a uniform state.
+            and None not in [_get_uniform_gridstate(ax.xaxis.minorTicks),
+                             _get_uniform_gridstate(ax.yaxis.minorTicks)]):
+        x_state = _get_uniform_gridstate(ax.xaxis.majorTicks)
+        y_state = _get_uniform_gridstate(ax.yaxis.majorTicks)
+        cycle = [(False, False), (True, False), (True, True), (False, True)]
+        try:
+            x_state, y_state = (
+                cycle[(cycle.index((x_state, y_state)) + 1) % len(cycle)])
+        except ValueError:
+            # Exclude major grids not in a uniform state.
+            pass
+        else:
+            # If turning major grids off, also turn minor grids off.
+            ax.grid(x_state, which="major" if x_state else "both", axis="x")
+            ax.grid(y_state, which="major" if y_state else "both", axis="y")
+            canvas.draw_idle()
+    # toggle major and minor grids in current axes (default key 'G')
+    if (event.key in grid_minor_keys
+            # Exclude major grids not in a uniform state.
+            and None not in [_get_uniform_gridstate(ax.xaxis.majorTicks),
+                             _get_uniform_gridstate(ax.yaxis.majorTicks)]):
+        x_state = _get_uniform_gridstate(ax.xaxis.minorTicks)
+        y_state = _get_uniform_gridstate(ax.yaxis.minorTicks)
+        cycle = [(False, False), (True, False), (True, True), (False, True)]
+        try:
+            x_state, y_state = (
+                cycle[(cycle.index((x_state, y_state)) + 1) % len(cycle)])
+        except ValueError:
+            # Exclude minor grids not in a uniform state.
+            pass
+        else:
+            ax.grid(x_state, which="both", axis="x")
+            ax.grid(y_state, which="both", axis="y")
+            canvas.draw_idle()
     # toggle scaling of y-axes between 'log and 'linear' (default key 'l')
     elif event.key in toggle_yscale_keys:
-        ax = event.inaxes
         scale = ax.get_yscale()
         if scale == 'log':
             ax.set_yscale('linear')
-            ax.figure.canvas.draw()
+            ax.figure.canvas.draw_idle()
         elif scale == 'linear':
-            ax.set_yscale('log')
-            ax.figure.canvas.draw()
+            try:
+                ax.set_yscale('log')
+            except ValueError as exc:
+                warnings.warn(str(exc))
+                ax.set_yscale('linear')
+            ax.figure.canvas.draw_idle()
     # toggle scaling of x-axes between 'log and 'linear' (default key 'k')
     elif event.key in toggle_xscale_keys:
-        ax = event.inaxes
         scalex = ax.get_xscale()
         if scalex == 'log':
             ax.set_xscale('linear')
-            ax.figure.canvas.draw()
+            ax.figure.canvas.draw_idle()
         elif scalex == 'linear':
-            ax.set_xscale('log')
-            ax.figure.canvas.draw()
+            try:
+                ax.set_xscale('log')
+            except ValueError:
+                warnings.warn(str(exc))
+                ax.set_xscale('linear')
+            ax.figure.canvas.draw_idle()
 
-    elif (event.key.isdigit() and event.key != '0') or event.key in all:
+    elif (event.key.isdigit() and event.key != '0') or event.key in all_keys:
         # keys in list 'all' enables all axes (default key 'a'),
         # otherwise if key is a number only enable this particular axes
         # if it was the axes, where the event was raised
-        if not (event.key in all):
+        if not (event.key in all_keys):
             n = int(event.key) - 1
         for i, a in enumerate(canvas.figure.get_axes()):
             # consider axes, in which the event was raised
             # FIXME: Why only this axes?
             if event.x is not None and event.y is not None \
                     and a.in_axes(event):
-                if event.key in all:
+                if event.key in all_keys:
                     a.set_navigate(True)
                 else:
                     a.set_navigate(i == n)
@@ -2715,8 +2706,8 @@ class NavigationToolbar2(object):
         (None, None, None, None),
         ('Pan', 'Pan axes with left mouse, zoom with right', 'move', 'pan'),
         ('Zoom', 'Zoom to rectangle', 'zoom_to_rect', 'zoom'),
-        (None, None, None, None),
         ('Subplots', 'Configure subplots', 'subplots', 'configure_subplots'),
+        (None, None, None, None),
         ('Save', 'Save the figure', 'filesave', 'save_figure'),
       )
 
@@ -2830,11 +2821,10 @@ class NavigationToolbar2(object):
                 pass
             else:
                 artists = [a for a in event.inaxes.mouseover_set
-                           if a.contains(event)]
+                           if a.contains(event) and a.get_visible()]
 
                 if artists:
-
-                    a = max(enumerate(artists), key=lambda x: x[1].zorder)[1]
+                    a = max(artists, key=lambda x: x.zorder)
                     if a is not event.inaxes.patch:
                         data = a.get_cursor_data(event)
                         if data is not None:
@@ -3074,7 +3064,7 @@ class NavigationToolbar2(object):
             else:
                 continue
 
-            a._set_view_from_bbox((lastx, lasty, x, y), view, direction,
+            a._set_view_from_bbox((lastx, lasty, x, y), direction,
                                   self._zoom_mode, twinx, twiny)
 
         self.draw()
@@ -3218,6 +3208,9 @@ class ToolContainerBase(object):
         if toggle:
             self.toolmanager.toolmanager_connect('tool_trigger_%s' % tool.name,
                                                  self._tool_toggled_cbk)
+            # If initially toggled
+            if tool.toggled:
+                self.toggle_toolitem(tool.name, True)
 
     def _remove_tool_cbk(self, event):
         """Captures the 'tool_removed_event' signal and removes the tool"""

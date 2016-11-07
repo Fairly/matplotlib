@@ -25,6 +25,16 @@
 #    undef _XOPEN_SOURCE
 #endif
 
+// Prevent multiple conflicting definitions of swab from stdlib.h and unistd.h
+#if defined(__sun) || defined(sun)
+#if defined(_XPG4)
+#undef _XPG4
+#endif
+#if defined(_XPG3)
+#undef _XPG3
+#endif
+#endif
+
 #include <Python.h>
 #include <numpy/ndarrayobject.h>
 
@@ -284,7 +294,7 @@ class array_view_accessors<AV, T, 2>
                                             self->m_strides[1] * j);
     }
 
-    sub_t operator[](npy_intp i) const
+    sub_t subarray(npy_intp i) const
     {
         const AVC *self = static_cast<const AVC *>(this);
 
@@ -318,7 +328,7 @@ class array_view_accessors<AV, T, 3>
                                             self->m_strides[1] * j + self->m_strides[2] * k);
     }
 
-    sub_t operator[](npy_intp i) const
+    sub_t subarray(npy_intp i) const
     {
         const AVC *self = static_cast<const AVC *>(this);
 
@@ -330,6 +340,9 @@ class array_view_accessors<AV, T, 3>
 
 
 };
+
+// When adding instantiations of array_view_accessors, remember to add entries
+// to zeros[] below.
 
 }
 
@@ -443,13 +456,18 @@ class array_view : public detail::array_view_accessors<array_view, T, ND>
                 m_data = NULL;
                 m_shape = zeros;
                 m_strides = zeros;
-            } else if (PyArray_NDIM(tmp) != ND) {
-                PyErr_Format(PyExc_ValueError,
-                             "Expected %d-dimensional array, got %d",
-                             ND,
-                             PyArray_NDIM(tmp));
-                Py_DECREF(tmp);
-                return 0;
+		if (PyArray_NDIM(tmp) == 0 && ND == 0) {
+		    m_arr = tmp;
+		    return 1;
+		}
+            }
+	    if (PyArray_NDIM(tmp) != ND) {
+		PyErr_Format(PyExc_ValueError,
+			     "Expected %d-dimensional array, got %d",
+			     ND,
+			     PyArray_NDIM(tmp));
+		Py_DECREF(tmp);
+		return 0;
             }
 
             /* Copy some of the data to the view object for faster access */
@@ -465,15 +483,29 @@ class array_view : public detail::array_view_accessors<array_view, T, ND>
 
     npy_intp dim(size_t i) const
     {
-        if (i > ND) {
+        if (i >= ND) {
             return 0;
         }
         return m_shape[i];
     }
 
+    /*
+       In most cases, code should use size() instead of dim(0), since
+       size() == 0 when any dimension is 0.
+    */
     size_t size() const
     {
-        return (size_t)dim(0);
+        bool empty = (ND == 0);
+        for (size_t i = 0; i < ND; i++) {
+            if (m_shape[i] == 0) {
+                empty = true;
+            }
+        }
+        if (empty) {
+            return 0;
+        } else {
+            return (size_t)dim(0);
+        }
     }
 
     bool empty() const
@@ -493,9 +525,16 @@ class array_view : public detail::array_view_accessors<array_view, T, ND>
         return (T *)m_data;
     }
 
+    // Return a new reference.
     PyObject *pyobj()
     {
         Py_XINCREF(m_arr);
+        return (PyObject *)m_arr;
+    }
+
+    // Steal a reference.
+    PyObject *pyobj_steal()
+    {
         return (PyObject *)m_arr;
     }
 

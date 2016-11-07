@@ -1,21 +1,53 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 import itertools
 from distutils.version import LooseVersion as V
 
 from nose.tools import assert_raises, assert_equal, assert_true
+from nose.tools import assert_sequence_equal
+
+try:
+    # this is not available in nose + py2.6
+    from nose.tools import assert_sequence_equal
+except ImportError:
+    assert_sequence_equal = None
 
 import numpy as np
 from numpy.testing.utils import assert_array_equal, assert_array_almost_equal
+from nose.plugins.skip import SkipTest
 
+from matplotlib import cycler
+import matplotlib
 import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 import matplotlib.cbook as cbook
 import matplotlib.pyplot as plt
 from matplotlib.testing.decorators import (image_comparison,
                                            cleanup, knownfailureif)
+
+
+def test_resample():
+    """
+    Github issue #6025 pointed to incorrect ListedColormap._resample;
+    here we test the method for LinearSegmentedColormap as well.
+    """
+    n = 101
+    colorlist = np.empty((n, 4), float)
+    colorlist[:, 0] = np.linspace(0, 1, n)
+    colorlist[:, 1] = 0.2
+    colorlist[:, 2] = np.linspace(1, 0, n)
+    colorlist[:, 3] = 0.7
+    lsc = mcolors.LinearSegmentedColormap.from_list('lsc', colorlist)
+    lc = mcolors.ListedColormap(colorlist)
+    lsc3 = lsc._resample(3)
+    lc3 = lc._resample(3)
+    expected = np.array([[0.0, 0.2, 1.0, 0.7],
+                         [0.5, 0.2, 0.5, 0.7],
+                         [1.0, 0.2, 0.0, 0.7]], float)
+    assert_array_almost_equal(lsc3([0, 0.5, 1]), expected)
+    assert_array_almost_equal(lc3([0, 0.5, 1]), expected)
 
 
 def test_colormap_endian():
@@ -125,12 +157,12 @@ def test_LogNorm():
 
 
 def test_PowerNorm():
-    a = np.array([0, 0.5, 1, 1.5], dtype=np.float)
+    a = np.array([0, 0.5, 1, 1.5], dtype=float)
     pnorm = mcolors.PowerNorm(1)
     norm = mcolors.Normalize()
     assert_array_almost_equal(norm(a), pnorm(a))
 
-    a = np.array([-0.5, 0, 2, 4, 8], dtype=np.float)
+    a = np.array([-0.5, 0, 2, 4, 8], dtype=float)
     expected = [0, 0, 1/16, 1/4, 1]
     pnorm = mcolors.PowerNorm(2, vmin=0, vmax=8)
     assert_array_almost_equal(pnorm(a), expected)
@@ -139,7 +171,7 @@ def test_PowerNorm():
     assert_array_almost_equal(a[1:], pnorm.inverse(pnorm(a))[1:])
 
     # Clip = True
-    a = np.array([-0.5, 0, 1, 8, 16], dtype=np.float)
+    a = np.array([-0.5, 0, 1, 8, 16], dtype=float)
     expected = [0, 0, 0, 1, 1]
     pnorm = mcolors.PowerNorm(2, vmin=2, vmax=8, clip=True)
     assert_array_almost_equal(pnorm(a), expected)
@@ -147,7 +179,7 @@ def test_PowerNorm():
     assert_equal(pnorm(a[-1]), expected[-1])
 
     # Clip = True at call time
-    a = np.array([-0.5, 0, 1, 8, 16], dtype=np.float)
+    a = np.array([-0.5, 0, 1, 8, 16], dtype=float)
     expected = [0, 0, 0, 1, 1]
     pnorm = mcolors.PowerNorm(2, vmin=2, vmax=8, clip=False)
     assert_array_almost_equal(pnorm(a, clip=True), expected)
@@ -157,10 +189,28 @@ def test_PowerNorm():
 
 def test_Normalize():
     norm = mcolors.Normalize()
-    vals = np.arange(-10, 10, 1, dtype=np.float)
+    vals = np.arange(-10, 10, 1, dtype=float)
     _inverse_tester(norm, vals)
     _scalar_tester(norm, vals)
     _mask_tester(norm, vals)
+
+    # Handle integer input correctly (don't overflow when computing max-min,
+    # i.e. 127-(-128) here).
+    vals = np.array([-128, 127], dtype=np.int8)
+    norm = mcolors.Normalize(vals.min(), vals.max())
+    assert_array_equal(np.asarray(norm(vals)), [0, 1])
+
+    # Don't lose precision on longdoubles (float128 on Linux):
+    # for array inputs...
+    vals = np.array([1.2345678901, 9.8765432109], dtype=np.longdouble)
+    norm = mcolors.Normalize(vals.min(), vals.max())
+    assert_array_equal(np.asarray(norm(vals)), [0, 1])
+    # and for scalar ones.
+    eps = np.finfo(np.longdouble).resolution
+    norm = plt.Normalize(1, 1 + 100 * eps)
+    # This returns exactly 0.5 when longdouble is extended precision (80-bit),
+    # but only a value close to it when it is quadruple precision (128-bit).
+    assert 0 < norm(1 + 50 * eps) < 1
 
 
 def test_SymLogNorm():
@@ -168,7 +218,7 @@ def test_SymLogNorm():
     Test SymLogNorm behavior
     """
     norm = mcolors.SymLogNorm(3, vmax=5, linscale=1.2)
-    vals = np.array([-30, -1, 2, 6], dtype=np.float)
+    vals = np.array([-30, -1, 2, 6], dtype=float)
     normed_vals = norm(vals)
     expected = [0., 0.53980074, 0.826991, 1.02758204]
     assert_array_almost_equal(normed_vals, expected)
@@ -228,7 +278,7 @@ def test_cmap_and_norm_from_levels_and_colors():
 def test_cmap_and_norm_from_levels_and_colors2():
     levels = [-1, 2, 2.5, 3]
     colors = ['red', (0, 1, 0), 'blue', (0.5, 0.5, 0.5), (0.0, 0.0, 0.0, 1.0)]
-    clr = mcolors.colorConverter.to_rgba_array(colors)
+    clr = mcolors.to_rgba_array(colors)
     bad = (0.1, 0.1, 0.1, 0.1)
     no_color = (0.0, 0.0, 0.0, 0.0)
     masked_value = 'masked_value'
@@ -305,13 +355,9 @@ def test_autoscale_masked():
 def test_colors_no_float():
     # Gray must be a string to distinguish 3-4 grays from RGB or RGBA.
 
-    def gray_from_float_rgb():
-        return mcolors.colorConverter.to_rgb(0.4)
-
     def gray_from_float_rgba():
-        return mcolors.colorConverter.to_rgba(0.4)
+        return mcolors.to_rgba(0.4)
 
-    assert_raises(ValueError, gray_from_float_rgb)
     assert_raises(ValueError, gray_from_float_rgba)
 
 
@@ -352,41 +398,44 @@ def test_light_source_shading_default():
     rgb = ls.shade(z, cmap)
 
     # Result stored transposed and rounded for for more compact display...
-    expect = np.array([[[0.87, 0.85, 0.90, 0.90, 0.82, 0.62, 0.34, 0.00],
-                        [0.85, 0.94, 0.99, 1.00, 1.00, 0.96, 0.62, 0.17],
-                        [0.90, 0.99, 1.00, 1.00, 1.00, 1.00, 0.71, 0.33],
-                        [0.90, 1.00, 1.00, 1.00, 1.00, 0.98, 0.51, 0.29],
-                        [0.82, 1.00, 1.00, 1.00, 1.00, 0.64, 0.25, 0.13],
-                        [0.62, 0.96, 1.00, 0.98, 0.64, 0.22, 0.06, 0.03],
-                        [0.34, 0.62, 0.71, 0.51, 0.25, 0.06, 0.00, 0.01],
-                        [0.00, 0.17, 0.33, 0.29, 0.13, 0.03, 0.01, 0.00]],
+    expect = np.array(
+        [[[0.00, 0.45, 0.90, 0.90, 0.82, 0.62, 0.28, 0.00],
+          [0.45, 0.94, 0.99, 1.00, 1.00, 0.96, 0.65, 0.17],
+          [0.90, 0.99, 1.00, 1.00, 1.00, 1.00, 0.94, 0.35],
+          [0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 0.49],
+          [0.82, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 0.41],
+          [0.62, 0.96, 1.00, 1.00, 1.00, 1.00, 0.90, 0.07],
+          [0.28, 0.65, 0.94, 1.00, 1.00, 0.90, 0.35, 0.01],
+          [0.00, 0.17, 0.35, 0.49, 0.41, 0.07, 0.01, 0.00]],
 
-                       [[0.87, 0.79, 0.83, 0.80, 0.66, 0.44, 0.23, 0.00],
-                        [0.79, 0.88, 0.93, 0.92, 0.83, 0.66, 0.38, 0.10],
-                        [0.83, 0.93, 0.99, 1.00, 0.92, 0.75, 0.40, 0.18],
-                        [0.80, 0.92, 1.00, 0.99, 0.93, 0.75, 0.28, 0.14],
-                        [0.66, 0.83, 0.92, 0.93, 0.87, 0.44, 0.12, 0.06],
-                        [0.44, 0.66, 0.75, 0.75, 0.44, 0.12, 0.03, 0.01],
-                        [0.23, 0.38, 0.40, 0.28, 0.12, 0.03, 0.00, 0.00],
-                        [0.00, 0.10, 0.18, 0.14, 0.06, 0.01, 0.00, 0.00]],
+         [[0.00, 0.28, 0.59, 0.72, 0.62, 0.40, 0.18, 0.00],
+          [0.28, 0.78, 0.93, 0.92, 0.83, 0.66, 0.39, 0.11],
+          [0.59, 0.93, 0.99, 1.00, 0.92, 0.75, 0.50, 0.21],
+          [0.72, 0.92, 1.00, 0.99, 0.93, 0.76, 0.51, 0.18],
+          [0.62, 0.83, 0.92, 0.93, 0.87, 0.68, 0.42, 0.08],
+          [0.40, 0.66, 0.75, 0.76, 0.68, 0.52, 0.23, 0.02],
+          [0.18, 0.39, 0.50, 0.51, 0.42, 0.23, 0.00, 0.00],
+          [0.00, 0.11, 0.21, 0.18, 0.08, 0.02, 0.00, 0.00]],
 
-                       [[0.87, 0.75, 0.78, 0.73, 0.55, 0.33, 0.16, 0.00],
-                        [0.75, 0.85, 0.90, 0.86, 0.71, 0.48, 0.23, 0.05],
-                        [0.78, 0.90, 0.98, 1.00, 0.82, 0.51, 0.21, 0.08],
-                        [0.73, 0.86, 1.00, 0.97, 0.84, 0.47, 0.11, 0.05],
-                        [0.55, 0.71, 0.82, 0.84, 0.71, 0.20, 0.03, 0.01],
-                        [0.33, 0.48, 0.51, 0.47, 0.20, 0.02, 0.00, 0.00],
-                        [0.16, 0.23, 0.21, 0.11, 0.03, 0.00, 0.00, 0.00],
-                        [0.00, 0.05, 0.08, 0.05, 0.01, 0.00, 0.00, 0.00]],
+         [[0.00, 0.18, 0.38, 0.46, 0.39, 0.26, 0.11, 0.00],
+          [0.18, 0.50, 0.70, 0.75, 0.64, 0.44, 0.25, 0.07],
+          [0.38, 0.70, 0.91, 0.98, 0.81, 0.51, 0.29, 0.13],
+          [0.46, 0.75, 0.98, 0.96, 0.84, 0.48, 0.22, 0.12],
+          [0.39, 0.64, 0.81, 0.84, 0.71, 0.31, 0.11, 0.05],
+          [0.26, 0.44, 0.51, 0.48, 0.31, 0.10, 0.03, 0.01],
+          [0.11, 0.25, 0.29, 0.22, 0.11, 0.03, 0.00, 0.00],
+          [0.00, 0.07, 0.13, 0.12, 0.05, 0.01, 0.00, 0.00]],
 
-                       [[1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]]]).T
+         [[1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]]
+        ]).T
+
     if (V(np.__version__) == V('1.9.0')):
         # Numpy 1.9.0 uses a 2. order algorithm on the edges by default
         # This was changed back again in 1.9.1
@@ -414,41 +463,43 @@ def test_light_source_masked_shading():
     rgb = ls.shade(z, cmap)
 
     # Result stored transposed and rounded for for more compact display...
-    expect = np.array([[[0.90, 0.88, 0.91, 0.91, 0.84, 0.64, 0.36, 0.00],
-                        [0.88, 0.96, 1.00, 1.00, 1.00, 0.97, 0.64, 0.18],
-                        [0.91, 1.00, 1.00, 1.00, 1.00, 1.00, 0.74, 0.34],
-                        [0.91, 1.00, 1.00, 0.00, 0.00, 1.00, 0.52, 0.30],
-                        [0.84, 1.00, 1.00, 0.00, 0.00, 1.00, 0.25, 0.13],
-                        [0.64, 0.97, 1.00, 1.00, 1.00, 0.23, 0.07, 0.03],
-                        [0.36, 0.64, 0.74, 0.52, 0.25, 0.07, 0.00, 0.01],
-                        [0.00, 0.18, 0.34, 0.30, 0.13, 0.03, 0.01, 0.00]],
+    expect = np.array(
+        [[[0.00, 0.46, 0.91, 0.91, 0.84, 0.64, 0.29, 0.00],
+          [0.46, 0.96, 1.00, 1.00, 1.00, 0.97, 0.67, 0.18],
+          [0.91, 1.00, 1.00, 1.00, 1.00, 1.00, 0.96, 0.36],
+          [0.91, 1.00, 1.00, 0.00, 0.00, 1.00, 1.00, 0.51],
+          [0.84, 1.00, 1.00, 0.00, 0.00, 1.00, 1.00, 0.44],
+          [0.64, 0.97, 1.00, 1.00, 1.00, 1.00, 0.94, 0.09],
+          [0.29, 0.67, 0.96, 1.00, 1.00, 0.94, 0.38, 0.01],
+          [0.00, 0.18, 0.36, 0.51, 0.44, 0.09, 0.01, 0.00]],
 
-                       [[0.90, 0.82, 0.85, 0.82, 0.68, 0.46, 0.24, 0.00],
-                        [0.82, 0.91, 0.95, 0.93, 0.85, 0.68, 0.39, 0.10],
-                        [0.85, 0.95, 1.00, 0.78, 0.78, 0.77, 0.42, 0.18],
-                        [0.82, 0.93, 0.78, 0.00, 0.00, 0.78, 0.30, 0.15],
-                        [0.68, 0.85, 0.78, 0.00, 0.00, 0.78, 0.13, 0.06],
-                        [0.46, 0.68, 0.77, 0.78, 0.78, 0.13, 0.03, 0.01],
-                        [0.24, 0.39, 0.42, 0.30, 0.13, 0.03, 0.00, 0.00],
-                        [0.00, 0.10, 0.18, 0.15, 0.06, 0.01, 0.00, 0.00]],
+         [[0.00, 0.29, 0.61, 0.75, 0.64, 0.41, 0.18, 0.00],
+          [0.29, 0.81, 0.95, 0.93, 0.85, 0.68, 0.40, 0.11],
+          [0.61, 0.95, 1.00, 0.78, 0.78, 0.77, 0.52, 0.22],
+          [0.75, 0.93, 0.78, 0.00, 0.00, 0.78, 0.54, 0.19],
+          [0.64, 0.85, 0.78, 0.00, 0.00, 0.78, 0.45, 0.08],
+          [0.41, 0.68, 0.77, 0.78, 0.78, 0.55, 0.25, 0.02],
+          [0.18, 0.40, 0.52, 0.54, 0.45, 0.25, 0.00, 0.00],
+          [0.00, 0.11, 0.22, 0.19, 0.08, 0.02, 0.00, 0.00]],
 
-                       [[0.90, 0.79, 0.81, 0.76, 0.58, 0.35, 0.17, 0.00],
-                        [0.79, 0.88, 0.92, 0.88, 0.73, 0.50, 0.24, 0.05],
-                        [0.81, 0.92, 1.00, 0.50, 0.50, 0.53, 0.22, 0.09],
-                        [0.76, 0.88, 0.50, 0.00, 0.00, 0.50, 0.12, 0.05],
-                        [0.58, 0.73, 0.50, 0.00, 0.00, 0.50, 0.03, 0.01],
-                        [0.35, 0.50, 0.53, 0.50, 0.50, 0.02, 0.00, 0.00],
-                        [0.17, 0.24, 0.22, 0.12, 0.03, 0.00, 0.00, 0.00],
-                        [0.00, 0.05, 0.09, 0.05, 0.01, 0.00, 0.00, 0.00]],
+         [[0.00, 0.19, 0.39, 0.48, 0.41, 0.26, 0.12, 0.00],
+          [0.19, 0.52, 0.73, 0.78, 0.66, 0.46, 0.26, 0.07],
+          [0.39, 0.73, 0.95, 0.50, 0.50, 0.53, 0.30, 0.14],
+          [0.48, 0.78, 0.50, 0.00, 0.00, 0.50, 0.23, 0.12],
+          [0.41, 0.66, 0.50, 0.00, 0.00, 0.50, 0.11, 0.05],
+          [0.26, 0.46, 0.53, 0.50, 0.50, 0.11, 0.03, 0.01],
+          [0.12, 0.26, 0.30, 0.23, 0.11, 0.03, 0.00, 0.00],
+          [0.00, 0.07, 0.14, 0.12, 0.05, 0.01, 0.00, 0.00]],
 
-                       [[1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 0.00, 0.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 0.00, 0.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
-                        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]]]).T
+         [[1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 0.00, 0.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 0.00, 0.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+          [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]],
+        ]).T
 
     assert_array_almost_equal(rgb, expect, decimal=2)
 
@@ -521,6 +572,11 @@ def test_light_source_planar_hillshading():
             assert_array_almost_equal(h, np.cos(np.radians(angle)))
 
 
+def test_xkcd():
+    assert mcolors.to_hex("blue") == "#0000ff"
+    assert mcolors.to_hex("xkcd:blue") == "#0343df"
+
+
 def _sph2cart(theta, phi):
     x = np.cos(theta) * np.sin(phi)
     y = np.sin(theta) * np.sin(phi)
@@ -534,6 +590,70 @@ def _azimuth2math(azimuth, elevation):
     theta = np.radians((90 - azimuth) % 360)
     phi = np.radians(90 - elevation)
     return theta, phi
+
+
+def test_pandas_iterable():
+    try:
+        import pandas as pd
+    except ImportError:
+        raise SkipTest("Pandas not installed")
+    if assert_sequence_equal is None:
+        raise SkipTest("nose lacks required function")
+    # Using a list or series yields equivalent
+    # color maps, i.e the series isn't seen as
+    # a single color
+    lst = ['red', 'blue', 'green']
+    s = pd.Series(lst)
+    cm1 = mcolors.ListedColormap(lst, N=5)
+    cm2 = mcolors.ListedColormap(s, N=5)
+    assert_sequence_equal(cm1.colors, cm2.colors)
+
+
+def test_colormap_reversing():
+    """Check the generated _lut data of a colormap and corresponding
+    reversed colormap if they are almost the same."""
+    for name in six.iterkeys(cm.cmap_d):
+        cmap = plt.get_cmap(name)
+        cmap_r = cmap.reversed()
+        if not cmap_r._isinit:
+            cmap._init()
+            cmap_r._init()
+        assert_array_almost_equal(cmap._lut[:-3], cmap_r._lut[-4::-1])
+
+
+@cleanup
+def test_cn():
+    matplotlib.rcParams['axes.prop_cycle'] = cycler('color',
+                                                    ['blue', 'r'])
+    assert mcolors.to_hex("C0") == '#0000ff'
+    assert mcolors.to_hex("C1") == '#ff0000'
+
+    matplotlib.rcParams['axes.prop_cycle'] = cycler('color',
+                                                    ['xkcd:blue', 'r'])
+    assert mcolors.to_hex("C0") == '#0343df'
+    assert mcolors.to_hex("C1") == '#ff0000'
+
+    matplotlib.rcParams['axes.prop_cycle'] = cycler('color', ['8e4585', 'r'])
+
+    assert mcolors.to_hex("C0") == '#8e4585'
+    # if '8e4585' gets parsed as a float before it gets detected as a hex
+    # colour it will be interpreted as a very large number.
+    # this mustn't happen.
+    assert mcolors.to_rgb("C0")[0] != np.inf
+
+
+def test_conversions():
+    # to_rgba_array("none") returns a (0, 4) array.
+    assert_array_equal(mcolors.to_rgba_array("none"), np.zeros((0, 4)))
+    # alpha is properly set.
+    assert_equal(mcolors.to_rgba((1, 1, 1), .5), (1, 1, 1, .5))
+    assert_equal(mcolors.to_rgba(".1", .5), (.1, .1, .1, .5))
+    # builtin round differs between py2 and py3.
+    assert_equal(mcolors.to_hex((.7, .7, .7)), "#b2b2b2")
+    # hex roundtrip.
+    hex_color = "#1234abcd"
+    assert_equal(mcolors.to_hex(mcolors.to_rgba(hex_color), keep_alpha=True),
+                 hex_color)
 
 
 if __name__ == '__main__':

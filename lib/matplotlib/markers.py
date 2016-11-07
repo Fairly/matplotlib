@@ -31,14 +31,19 @@ marker                         description
 "d"                            thin_diamond
 "|"                            vline
 "_"                            hline
+"P"                            plus (filled)
+"X"                            x (filled)
 TICKLEFT                       tickleft
 TICKRIGHT                      tickright
 TICKUP                         tickup
 TICKDOWN                       tickdown
-CARETLEFT                      caretleft
-CARETRIGHT                     caretright
-CARETUP                        caretup
-CARETDOWN                      caretdown
+CARETLEFT                      caretleft (centered at tip)
+CARETRIGHT                     caretright (centered at tip)
+CARETUP                        caretup (centered at tip)
+CARETDOWN                      caretdown (centered at tip)
+CARETLEFTBASE                  caretleft (centered at base)
+CARETRIGHTBASE                 caretright (centered at base)
+CARETUPBASE                    caretup (centered at base)
 "None"                         nothing
 None                           nothing
 " "                            nothing
@@ -79,8 +84,8 @@ that define the shape.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
-from matplotlib.externals.six.moves import xrange
+import six
+from six.moves import xrange
 
 import numpy as np
 
@@ -91,7 +96,10 @@ from .transforms import IdentityTransform, Affine2D
 
 # special-purpose marker identifiers:
 (TICKLEFT, TICKRIGHT, TICKUP, TICKDOWN,
- CARETLEFT, CARETRIGHT, CARETUP, CARETDOWN) = list(xrange(8))
+ CARETLEFT, CARETRIGHT, CARETUP, CARETDOWN,
+ CARETLEFTBASE, CARETRIGHTBASE, CARETUPBASE, CARETDOWNBASE) = list(xrange(12))
+
+_empty_path = Path(np.empty((0, 2)))
 
 
 class MarkerStyle(object):
@@ -120,6 +128,8 @@ class MarkerStyle(object):
         'd': 'thin_diamond',
         '|': 'vline',
         '_': 'hline',
+        'P': 'plus_filled',
+        'X': 'x_filled',
         TICKLEFT: 'tickleft',
         TICKRIGHT: 'tickright',
         TICKUP: 'tickup',
@@ -128,6 +138,10 @@ class MarkerStyle(object):
         CARETRIGHT: 'caretright',
         CARETUP: 'caretup',
         CARETDOWN: 'caretdown',
+        CARETLEFTBASE: 'caretleftbase',
+        CARETRIGHTBASE: 'caretrightbase',
+        CARETUPBASE: 'caretupbase',
+        CARETDOWNBASE: 'caretdownbase',
         "None": 'nothing',
         None: 'nothing',
         ' ': 'nothing',
@@ -137,7 +151,8 @@ class MarkerStyle(object):
     # Just used for informational purposes.  is_filled()
     # is calculated in the _set_* functions.
     filled_markers = (
-        'o', 'v', '^', '<', '>', '8', 's', 'p', '*', 'h', 'H', 'D', 'd')
+        'o', 'v', '^', '<', '>', '8', 's', 'p', '*', 'h', 'H', 'D', 'd',
+        'P', 'X')
 
     fillstyles = ('full', 'left', 'right', 'bottom', 'top', 'none')
     _half_fillstyles = ('left', 'right', 'bottom', 'top')
@@ -165,11 +180,9 @@ class MarkerStyle(object):
         fillstyle : string, optional, default: 'full'
             'full', 'left", 'right', 'bottom', 'top', 'none'
         """
-        # The fillstyle has to be set here as it might be accessed by calls to
-        # _recache() in set_marker.
-        self._fillstyle = fillstyle
-        self.set_marker(marker)
+        self._marker_function = None
         self.set_fillstyle(fillstyle)
+        self.set_marker(marker)
 
     def __getstate__(self):
         d = self.__dict__.copy()
@@ -179,10 +192,11 @@ class MarkerStyle(object):
     def __setstate__(self, statedict):
         self.__dict__ = statedict
         self.set_marker(self._marker)
-        self._recache()
 
     def _recache(self):
-        self._path = Path(np.empty((0, 2)))
+        if self._marker_function is None:
+            return
+        self._path = _empty_path
         self._transform = IdentityTransform()
         self._alt_path = None
         self._alt_transform = None
@@ -779,6 +793,36 @@ class MarkerStyle(object):
         self._path = self._caret_path
         self._joinstyle = 'miter'
 
+    _caret_path_base = Path([[-1.0, 0.0], [0.0, -1.5], [1.0, 0]])
+
+    def _set_caretdownbase(self):
+        self._transform = Affine2D().scale(0.5)
+        self._snap_threshold = 3.0
+        self._filled = False
+        self._path = self._caret_path_base
+        self._joinstyle = 'miter'
+
+    def _set_caretupbase(self):
+        self._transform = Affine2D().scale(0.5).rotate_deg(180)
+        self._snap_threshold = 3.0
+        self._filled = False
+        self._path = self._caret_path_base
+        self._joinstyle = 'miter'
+
+    def _set_caretleftbase(self):
+        self._transform = Affine2D().scale(0.5).rotate_deg(270)
+        self._snap_threshold = 3.0
+        self._filled = False
+        self._path = self._caret_path_base
+        self._joinstyle = 'miter'
+
+    def _set_caretrightbase(self):
+        self._transform = Affine2D().scale(0.5).rotate_deg(90)
+        self._snap_threshold = 3.0
+        self._filled = False
+        self._path = self._caret_path_base
+        self._joinstyle = 'miter'
+
     _x_path = Path([[-1.0, -1.0], [1.0, 1.0],
                     [-1.0, 1.0], [1.0, -1.0]],
                    [Path.MOVETO, Path.LINETO,
@@ -789,3 +833,87 @@ class MarkerStyle(object):
         self._snap_threshold = 3.0
         self._filled = False
         self._path = self._x_path
+
+    _plus_filled_path = Path([(1/3, 0), (2/3, 0), (2/3, 1/3),
+                              (1, 1/3), (1, 2/3), (2/3, 2/3),
+                              (2/3, 1), (1/3, 1), (1/3, 2/3),
+                              (0, 2/3), (0, 1/3), (1/3, 1/3),
+                              (1/3, 0)],
+                             [Path.MOVETO, Path.LINETO, Path.LINETO,
+                              Path.LINETO, Path.LINETO, Path.LINETO,
+                              Path.LINETO, Path.LINETO, Path.LINETO,
+                              Path.LINETO, Path.LINETO, Path.LINETO,
+                              Path.CLOSEPOLY])
+
+    _plus_filled_path_t = Path([(1, 1/2), (1, 2/3), (2/3, 2/3),
+                                (2/3, 1), (1/3, 1), (1/3, 2/3),
+                                (0, 2/3), (0, 1/2), (1, 1/2)],
+                               [Path.MOVETO, Path.LINETO, Path.LINETO,
+                                Path.LINETO, Path.LINETO, Path.LINETO,
+                                Path.LINETO, Path.LINETO,
+                                Path.CLOSEPOLY])
+
+    def _set_plus_filled(self):
+        self._transform = Affine2D().translate(-0.5, -0.5)
+        self._snap_threshold = 5.0
+        self._joinstyle = 'miter'
+        fs = self.get_fillstyle()
+        if not self._half_fill():
+            self._path = self._plus_filled_path
+        else:
+            # Rotate top half path to support all partitions
+            if fs == 'top':
+                rotate, rotate_alt = 0, 180
+            elif fs == 'bottom':
+                rotate, rotate_alt = 180, 0
+            elif fs == 'left':
+                rotate, rotate_alt = 90, 270
+            else:
+                rotate, rotate_alt = 270, 90
+
+            self._path = self._plus_filled_path_t
+            self._alt_path = self._plus_filled_path_t
+            self._alt_transform = Affine2D().translate(-0.5, -0.5)
+            self._transform.rotate_deg(rotate)
+            self._alt_transform.rotate_deg(rotate_alt)
+
+    _x_filled_path = Path([(0.25, 0), (0.5, 0.25), (0.75, 0), (1, 0.25),
+                           (0.75, 0.5), (1, 0.75), (0.75, 1), (0.5, 0.75),
+                           (0.25, 1), (0, 0.75), (0.25, 0.5), (0, 0.25),
+                           (0.25, 0)],
+                          [Path.MOVETO, Path.LINETO, Path.LINETO,
+                           Path.LINETO, Path.LINETO, Path.LINETO,
+                           Path.LINETO, Path.LINETO, Path.LINETO,
+                           Path.LINETO, Path.LINETO, Path.LINETO,
+                           Path.CLOSEPOLY])
+
+    _x_filled_path_t = Path([(0.75, 0.5), (1, 0.75), (0.75, 1),
+                             (0.5, 0.75), (0.25, 1), (0, 0.75),
+                             (0.25, 0.5), (0.75, 0.5)],
+                            [Path.MOVETO, Path.LINETO, Path.LINETO,
+                             Path.LINETO, Path.LINETO, Path.LINETO,
+                             Path.LINETO, Path.CLOSEPOLY])
+
+    def _set_x_filled(self):
+        self._transform = Affine2D().translate(-0.5, -0.5)
+        self._snap_threshold = 5.0
+        self._joinstyle = 'miter'
+        fs = self.get_fillstyle()
+        if not self._half_fill():
+            self._path = self._x_filled_path
+        else:
+            # Rotate top half path to support all partitions
+            if fs == 'top':
+                rotate, rotate_alt = 0, 180
+            elif fs == 'bottom':
+                rotate, rotate_alt = 180, 0
+            elif fs == 'left':
+                rotate, rotate_alt = 90, 270
+            else:
+                rotate, rotate_alt = 270, 90
+
+            self._path = self._x_filled_path_t
+            self._alt_path = self._x_filled_path_t
+            self._alt_transform = Affine2D().translate(-0.5, -0.5)
+            self._transform.rotate_deg(rotate)
+            self._alt_transform.rotate_deg(rotate_alt)

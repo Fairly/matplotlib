@@ -6,7 +6,7 @@ import os
 
 from nose.tools import assert_equal
 from nose.plugins.skip import SkipTest
-from matplotlib.testing.noseclasses import KnownFailureTest
+from ..testing import xfail
 
 try:
     import pep8
@@ -100,6 +100,7 @@ def assert_pep8_conformance(module=matplotlib, exclude_files=None,
     The file should be a line separated list of filenames/directories
     as can be passed to the "pep8" tool's exclude list.
     """
+    __tracebackhide__ = True
 
     if not HAS_PEP8:
         raise SkipTest('The pep8 tool is required for this test')
@@ -156,8 +157,9 @@ def assert_pep8_conformance(module=matplotlib, exclude_files=None,
 
 
 def test_pep8_conformance_installed_files():
-    exclude_files = ['_delaunay.py',
-                     '_image.py',
+    __tracebackhide__ = True
+
+    exclude_files = ['_image.py',
                      '_tri.py',
                      '_backend_agg.py',
                      '_tkagg.py',
@@ -178,7 +180,6 @@ def test_pep8_conformance_installed_files():
                           'backend_bases.py',
                           'cbook.py',
                           'collections.py',
-                          'dviread.py',
                           'font_manager.py',
                           'fontconfig_pattern.py',
                           'gridspec.py',
@@ -192,7 +193,6 @@ def test_pep8_conformance_installed_files():
                           'texmanager.py',
                           'transforms.py',
                           'type1font.py',
-                          'widgets.py',
                           'testing/decorators.py',
                           'testing/jpl_units/Duration.py',
                           'testing/jpl_units/Epoch.py',
@@ -205,8 +205,6 @@ def test_pep8_conformance_installed_files():
                           'tri/triinterpolate.py',
                           'tests/test_axes.py',
                           'tests/test_bbox_tight.py',
-                          'tests/test_delaunay.py',
-                          'tests/test_dviread.py',
                           'tests/test_image.py',
                           'tests/test_legend.py',
                           'tests/test_lines.py',
@@ -217,11 +215,8 @@ def test_pep8_conformance_installed_files():
                           'tests/test_subplots.py',
                           'tests/test_tightlayout.py',
                           'tests/test_triangulation.py',
-                          'compat/subprocess.py',
-                          'backends/__init__.py',
                           'backends/backend_agg.py',
                           'backends/backend_cairo.py',
-                          'backends/backend_cocoaagg.py',
                           'backends/backend_gdk.py',
                           'backends/backend_gtk.py',
                           'backends/backend_gtk3.py',
@@ -229,7 +224,6 @@ def test_pep8_conformance_installed_files():
                           'backends/backend_gtkagg.py',
                           'backends/backend_gtkcairo.py',
                           'backends/backend_macosx.py',
-                          'backends/backend_mixed.py',
                           'backends/backend_pgf.py',
                           'backends/backend_ps.py',
                           'backends/backend_svg.py',
@@ -243,8 +237,7 @@ def test_pep8_conformance_installed_files():
                           'sphinxext/plot_directive.py',
                           'projections/__init__.py',
                           'projections/geo.py',
-                          'projections/polar.py',
-                          'externals/six.py']
+                          'projections/polar.py']
     expected_bad_files = ['*/matplotlib/' + s for s in expected_bad_files]
     assert_pep8_conformance(module=matplotlib,
                             exclude_files=exclude_files,
@@ -263,9 +256,8 @@ def test_pep8_conformance_examples():
             fp, tail = os.path.split(fp)
 
     if mpldir is None:
-        raise KnownFailureTest("can not find the examples, set env "
-                               "MPL_REPO_DIR to point to the top-level path "
-                               "of the source tree")
+        xfail("can not find the examples, set env MPL_REPO_DIR to point "
+              "to the top-level path of the source tree")
 
     exdir = os.path.join(mpldir, 'examples')
     blacklist = ()
@@ -273,7 +265,32 @@ def test_pep8_conformance_examples():
                           '*/pylab_examples/tricontour_demo.py',
                           '*/pylab_examples/tripcolor_demo.py',
                           '*/pylab_examples/triplot_demo.py',
-                          '*/shapes_and_collections/artist_reference.py']
+                          '*/shapes_and_collections/artist_reference.py',
+                          '*/pyplots/align_ylabels.py',
+                          '*/pyplots/annotate_transform.py',
+                          '*/pyplots/pyplot_simple.py',
+                          '*/pyplots/annotation_basic.py',
+                          '*/pyplots/annotation_polar.py',
+                          '*/pyplots/auto_subplots_adjust.py',
+                          '*/pyplots/pyplot_two_subplots.py',
+                          '*/pyplots/boxplot_demo.py',
+                          '*/pyplots/tex_demo.py',
+                          '*/pyplots/compound_path_demo.py',
+                          '*/pyplots/text_commands.py',
+                          '*/pyplots/dollar_ticks.py',
+                          '*/pyplots/text_layout.py',
+                          '*/pyplots/fig_axes_customize_simple.py',
+                          '*/pyplots/whats_new_1_subplot3d.py',
+                          '*/pyplots/fig_axes_labels_simple.py',
+                          '*/pyplots/whats_new_98_4_fancy.py',
+                          '*/pyplots/fig_x.py',
+                          '*/pyplots/whats_new_98_4_fill_between.py',
+                          '*/pyplots/whats_new_98_4_legend.py',
+                          '*/pyplots/pyplot_annotate.py',
+                          '*/pyplots/whats_new_99_axes_grid.py',
+                          '*/pyplots/pyplot_formatstr.py',
+                          '*/pyplots/pyplot_mathtext.py',
+                          '*/pyplots/whats_new_99_spines.py']
     assert_pep8_conformance(dirname=exdir,
                             extra_exclude_directories=blacklist,
                             pep8_additional_ignore=PEP8_ADDITIONAL_IGNORE +

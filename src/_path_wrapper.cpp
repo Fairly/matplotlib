@@ -11,13 +11,13 @@ PyObject *convert_polygon_vector(std::vector<Polygon> &polygons)
 
     for (size_t i = 0; i < polygons.size(); ++i) {
         Polygon poly = polygons[i];
-        npy_intp dims[] = {(npy_intp)poly.size() + 1, 2 };
-        numpy::array_view<double, 2> subresult(dims);
+        npy_intp dims[2];
+        dims[1] = 2;
 
-        /* Make last point same as first. */
+        dims[0] = (npy_intp)poly.size();
+
+        numpy::array_view<double, 2> subresult(dims);
         memcpy(subresult.data(), &poly[0], sizeof(double) * poly.size() * 2);
-        subresult(poly.size(), 0) = poly[0].x;
-        subresult(poly.size(), 1) = poly[0].y;
 
         if (PyList_SetItem(pyresult, i, subresult.pyobj())) {
             Py_DECREF(pyresult);
@@ -69,7 +69,7 @@ static PyObject *Py_points_in_path(PyObject *self, PyObject *args, PyObject *kwd
 
     if (!PyArg_ParseTuple(args,
                           "O&dO&O&:points_in_path",
-                          &points.converter,
+                          &convert_points,
                           &points,
                           &r,
                           &convert_path,
@@ -79,8 +79,8 @@ static PyObject *Py_points_in_path(PyObject *self, PyObject *args, PyObject *kwd
         return NULL;
     }
 
-    npy_intp dims[] = { points.dim(0) };
-    numpy::array_view<bool, 1> results(dims);
+    npy_intp dims[] = { (npy_intp)points.size() };
+    numpy::array_view<uint8_t, 1> results(dims);
 
     CALL_CPP("points_in_path", (points_in_path(points, r, path, trans, results)));
 
@@ -128,7 +128,7 @@ static PyObject *Py_points_on_path(PyObject *self, PyObject *args, PyObject *kwd
 
     if (!PyArg_ParseTuple(args,
                           "O&dO&O&:points_on_path",
-                          &points.converter,
+                          &convert_points,
                           &points,
                           &r,
                           &convert_path,
@@ -138,8 +138,8 @@ static PyObject *Py_points_on_path(PyObject *self, PyObject *args, PyObject *kwd
         return NULL;
     }
 
-    npy_intp dims[] = { points.dim(0) };
-    numpy::array_view<bool, 1> results(dims);
+    npy_intp dims[] = { (npy_intp)points.size() };
+    numpy::array_view<uint8_t, 1> results(dims);
 
     CALL_CPP("points_on_path", (points_on_path(points, r, path, trans, results)));
 
@@ -200,7 +200,10 @@ static PyObject *Py_update_path_extents(PyObject *self, PyObject *args, PyObject
     }
 
     if (minpos.dim(0) != 2) {
-        PyErr_SetString(PyExc_ValueError, "minpos must be of length 2");
+        PyErr_Format(PyExc_ValueError,
+                     "minpos must be of length 2, got %d",
+                     minpos.dim(0));
+        return NULL;
     }
 
     extent_limits e;
@@ -263,9 +266,9 @@ static PyObject *Py_get_path_collection_extents(PyObject *self, PyObject *args, 
                           &convert_trans_affine,
                           &master_transform,
                           &pathsobj,
-                          &transforms.converter,
+                          &convert_transforms,
                           &transforms,
-                          &offsets.converter,
+                          &convert_points,
                           &offsets,
                           &convert_trans_affine,
                           &offset_trans)) {
@@ -319,9 +322,9 @@ static PyObject *Py_point_in_path_collection(PyObject *self, PyObject *args, PyO
                           &convert_trans_affine,
                           &master_transform,
                           &pathsobj,
-                          &transforms.converter,
+                          &convert_transforms,
                           &transforms,
-                          &offsets.converter,
+                          &convert_points,
                           &offsets,
                           &convert_trans_affine,
                           &offset_trans,
@@ -434,16 +437,21 @@ static PyObject *Py_affine_transform(PyObject *self, PyObject *args, PyObject *k
 
     try {
         numpy::array_view<double, 2> vertices(vertices_obj);
-        npy_intp dims[] = { vertices.dim(0), 2 };
+        npy_intp dims[] = { (npy_intp)vertices.size(), 2 };
         numpy::array_view<double, 2> result(dims);
         CALL_CPP("affine_transform", (affine_transform_2d(vertices, trans, result)));
         return result.pyobj();
     } catch (py::exception) {
-        numpy::array_view<double, 1> vertices(vertices_obj);
-        npy_intp dims[] = { vertices.dim(0) };
-        numpy::array_view<double, 1> result(dims);
-        CALL_CPP("affine_transform", (affine_transform_1d(vertices, trans, result)));
-        return result.pyobj();
+        PyErr_Clear();
+        try {
+            numpy::array_view<double, 1> vertices(vertices_obj);
+            npy_intp dims[] = { (npy_intp)vertices.size() };
+            numpy::array_view<double, 1> result(dims);
+            CALL_CPP("affine_transform", (affine_transform_1d(vertices, trans, result)));
+            return result.pyobj();
+        } catch (py::exception) {
+            return NULL;
+        }
     }
 }
 
@@ -459,7 +467,7 @@ static PyObject *Py_count_bboxes_overlapping_bbox(PyObject *self, PyObject *args
                           "O&O&:count_bboxes_overlapping_bbox",
                           &convert_rect,
                           &bbox,
-                          &bboxes.converter,
+                          &convert_bboxes,
                           &bboxes)) {
         return NULL;
     }
@@ -521,21 +529,26 @@ static PyObject *Py_convert_path_to_polygons(PyObject *self, PyObject *args, PyO
     py::PathIterator path;
     agg::trans_affine trans;
     double width = 0.0, height = 0.0;
+    int closed_only = 1;
     std::vector<Polygon> result;
+    const char *names[] = { "path", "transform", "width", "height", "closed_only", NULL };
 
-    if (!PyArg_ParseTuple(args,
-                          "O&O&|dd:convert_path_to_polygons",
-                          &convert_path,
-                          &path,
-                          &convert_trans_affine,
-                          &trans,
-                          &width,
-                          &height)) {
+    if (!PyArg_ParseTupleAndKeywords(args,
+                                     kwds,
+                                     "O&O&|ddi:convert_path_to_polygons",
+                                     (char **)names,
+                                     &convert_path,
+                                     &path,
+                                     &convert_trans_affine,
+                                     &trans,
+                                     &width,
+                                     &height,
+                                     &closed_only)) {
         return NULL;
     }
 
     CALL_CPP("convert_path_to_polygons",
-             (convert_path_to_polygons(path, trans, width, height, result)));
+             (convert_path_to_polygons(path, trans, width, height, closed_only, result)));
 
     return convert_polygon_vector(result);
 }
@@ -630,8 +643,9 @@ static PyObject *Py_convert_to_string(PyObject *self, PyObject *args, PyObject *
     PyObject *codesobj;
     char *codes[5];
     int postfix;
-    char *buffer;
+    char *buffer = NULL;
     size_t buffersize;
+    PyObject *result;
     int status;
 
     if (!PyArg_ParseTuple(args,
@@ -694,11 +708,100 @@ static PyObject *Py_convert_to_string(PyObject *self, PyObject *args, PyObject *
     }
 
     if (buffersize == 0) {
-        return PyBytes_FromString("");
+        result = PyBytes_FromString("");
     } else {
-        return PyBytes_FromStringAndSize(buffer, buffersize);
+        result = PyBytes_FromStringAndSize(buffer, buffersize);
+    }
+
+    free(buffer);
+
+    return result;
+}
+
+
+const char *Py_is_sorted__doc__ = "is_sorted(array)\n\n"
+    "Returns True if 1-D array is monotonically increasing, ignoring NaNs\n";
+
+static PyObject *Py_is_sorted(PyObject *self, PyObject *obj)
+{
+    npy_intp size;
+    bool result;
+
+    PyArrayObject *array = (PyArrayObject *)PyArray_FromAny(
+        obj, NULL, 1, 1, 0, NULL);
+
+    if (array == NULL) {
+        return NULL;
+    }
+
+    size = PyArray_DIM(array, 0);
+
+    if (size < 2) {
+        Py_DECREF(array);
+        Py_RETURN_TRUE;
+    }
+
+    /* Handle just the most common types here, otherwise coerce to
+    double */
+    switch(PyArray_TYPE(array)) {
+    case NPY_INT:
+        {
+            _is_sorted_int<npy_int> is_sorted;
+            result = is_sorted(array);
+        }
+        break;
+
+    case NPY_LONG:
+        {
+            _is_sorted_int<npy_long> is_sorted;
+            result = is_sorted(array);
+        }
+        break;
+
+    case NPY_LONGLONG:
+        {
+            _is_sorted_int<npy_longlong> is_sorted;
+            result = is_sorted(array);
+        }
+        break;
+
+    case NPY_FLOAT:
+        {
+            _is_sorted<npy_float> is_sorted;
+            result = is_sorted(array);
+        }
+        break;
+
+    case NPY_DOUBLE:
+        {
+            _is_sorted<npy_double> is_sorted;
+            result = is_sorted(array);
+        }
+        break;
+
+    default:
+        {
+            Py_DECREF(array);
+            array = (PyArrayObject *)PyArray_FromObject(obj, NPY_DOUBLE, 1, 1);
+
+            if (array == NULL) {
+                return NULL;
+            }
+
+            _is_sorted<npy_double> is_sorted;
+            result = is_sorted(array);
+        }
+    }
+
+    Py_DECREF(array);
+
+    if (result) {
+        Py_RETURN_TRUE;
+    } else {
+        Py_RETURN_FALSE;
     }
 }
+
 
 extern "C" {
 
@@ -716,15 +819,11 @@ extern "C" {
         {"affine_transform", (PyCFunction)Py_affine_transform, METH_VARARGS, Py_affine_transform__doc__},
         {"count_bboxes_overlapping_bbox", (PyCFunction)Py_count_bboxes_overlapping_bbox, METH_VARARGS, Py_count_bboxes_overlapping_bbox__doc__},
         {"path_intersects_path", (PyCFunction)Py_path_intersects_path, METH_VARARGS|METH_KEYWORDS, Py_path_intersects_path__doc__},
-        {"convert_path_to_polygons", (PyCFunction)Py_convert_path_to_polygons, METH_VARARGS, Py_convert_path_to_polygons__doc__},
+        {"convert_path_to_polygons", (PyCFunction)Py_convert_path_to_polygons, METH_VARARGS|METH_KEYWORDS, Py_convert_path_to_polygons__doc__},
         {"cleanup_path", (PyCFunction)Py_cleanup_path, METH_VARARGS, Py_cleanup_path__doc__},
         {"convert_to_string", (PyCFunction)Py_convert_to_string, METH_VARARGS, Py_convert_to_string__doc__},
+        {"is_sorted", (PyCFunction)Py_is_sorted, METH_O, Py_is_sorted__doc__},
         {NULL}
-    };
-
-    struct module_state
-    {
-        int _dummy;
     };
 
 #if PY3K
@@ -732,7 +831,7 @@ extern "C" {
         PyModuleDef_HEAD_INIT,
         "_path",
         NULL,
-        sizeof(struct module_state),
+        0,
         module_functions,
         NULL,
         NULL,

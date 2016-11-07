@@ -18,6 +18,7 @@
 
 #include "path_converters.h"
 #include "_backend_agg_basic_types.h"
+#include "numpy_cpp.h"
 
 struct XY
 {
@@ -27,7 +28,39 @@ struct XY
     XY(double x_, double y_) : x(x_), y(y_)
     {
     }
+
+    bool operator==(const XY& o)
+    {
+        return (x == o.x && y == o.y);
+    }
+
+    bool operator!=(const XY& o)
+    {
+        return (x != o.x || y != o.y);
+    }
 };
+
+typedef std::vector<XY> Polygon;
+
+void _finalize_polygon(std::vector<Polygon> &result, int closed_only)
+{
+    if (result.size() == 0) {
+        return;
+    }
+
+    Polygon &polygon = result.back();
+
+    /* Clean up the last polygon in the result.  */
+    if (polygon.size() == 0) {
+        result.pop_back();
+    } else if (closed_only) {
+        if (polygon.size() < 3) {
+            result.pop_back();
+        } else if (polygon.front() != polygon.back()) {
+            polygon.push_back(polygon.front());
+        }
+    }
+}
 
 //
 // The following function was found in the Agg 2.3 examples (interactive_polygon.cpp).
@@ -69,7 +102,7 @@ struct XY
 template <class PathIterator, class PointArray, class ResultArray>
 void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &inside_flag)
 {
-    bool yflag1;
+    uint8_t yflag1;
     double vtx0, vty0, vtx1, vty1;
     double tx, ty;
     double sx, sy;
@@ -79,13 +112,13 @@ void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &ins
 
     size_t n = points.size();
 
-    std::vector<bool> yflag0(n);
-    std::vector<bool> subpath_flag(n);
+    std::vector<uint8_t> yflag0(n);
+    std::vector<uint8_t> subpath_flag(n);
 
     path.rewind(0);
 
     for (i = 0; i < n; ++i) {
-        inside_flag[i] = false;
+        inside_flag[i] = 0;
     }
 
     unsigned code = 0;
@@ -102,13 +135,13 @@ void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &ins
         sy = vty0 = vty1 = y;
 
         for (i = 0; i < n; ++i) {
-            ty = points[i][1];
+            ty = points(i, 1);
 
             if (std::isfinite(ty)) {
                 // get test bit for above/below X axis
                 yflag0[i] = (vty0 >= ty);
 
-                subpath_flag[i] = false;
+                subpath_flag[i] = 0;
             }
         }
 
@@ -125,8 +158,8 @@ void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &ins
             }
 
             for (i = 0; i < n; ++i) {
-                tx = points[i][0];
-                ty = points[i][1];
+                tx = points(i, 0);
+                ty = points(i, 1);
 
                 if (!(std::isfinite(tx) && std::isfinite(ty))) {
                     continue;
@@ -154,7 +187,7 @@ void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &ins
                     // Haigh-Hutchinson's different polygon inclusion
                     // tests.
                     if (((vty1 - ty) * (vtx0 - vtx1) >= (vtx1 - tx) * (vty0 - vty1)) == yflag1) {
-                        subpath_flag[i] = subpath_flag[i] ^ true;
+                        subpath_flag[i] ^= 1;
                     }
                 }
 
@@ -173,8 +206,8 @@ void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &ins
 
         all_done = true;
         for (i = 0; i < n; ++i) {
-            tx = points[i][0];
-            ty = points[i][1];
+            tx = points(i, 0);
+            ty = points(i, 1);
 
             if (!(std::isfinite(tx) && std::isfinite(ty))) {
                 continue;
@@ -186,8 +219,8 @@ void point_in_path_impl(PointArray &points, PathIterator &path, ResultArray &ins
                     subpath_flag[i] = subpath_flag[i] ^ true;
                 }
             }
-            inside_flag[i] = inside_flag[i] || subpath_flag[i];
-            if (inside_flag[i] == false) {
+            inside_flag[i] |= subpath_flag[i];
+            if (inside_flag[i] == 0) {
                 all_done = false;
             }
         }
@@ -222,21 +255,23 @@ inline void points_in_path(PointArray &points,
     transformed_path_t trans_path(path, trans);
     no_nans_t no_nans_path(trans_path, true, path.has_curves());
     curve_t curved_path(no_nans_path);
-    contour_t contoured_path(curved_path);
-    contoured_path.width(r);
-
-    point_in_path_impl(points, contoured_path, result);
+    if (r != 0.0) {
+        contour_t contoured_path(curved_path);
+        contoured_path.width(r);
+        point_in_path_impl(points, contoured_path, result);
+    } else {
+        point_in_path_impl(points, curved_path, result);
+    }
 }
 
 template <class PathIterator>
 inline bool point_in_path(
     double x, double y, const double r, PathIterator &path, agg::trans_affine &trans)
 {
-    std::vector<double> point;
-    std::vector<std::vector<double> > points;
-    point.push_back(x);
-    point.push_back(y);
-    points.push_back(point);
+    npy_intp shape[] = {1, 2};
+    numpy::array_view<double, 2> points(shape);
+    points(0, 0) = x;
+    points(0, 1) = y;
 
     int result[1];
     result[0] = 0;
@@ -275,11 +310,10 @@ template <class PathIterator>
 inline bool point_on_path(
     double x, double y, const double r, PathIterator &path, agg::trans_affine &trans)
 {
-    std::vector<double> point;
-    std::vector<std::vector<double> > points;
-    point.push_back(x);
-    point.push_back(y);
-    points.push_back(point);
+    npy_intp shape[] = {1, 2};
+    numpy::array_view<double, 2> points(shape);
+    points(0, 0) = x;
+    points(0, 1) = y;
 
     int result[1];
     result[0] = 0;
@@ -358,7 +392,7 @@ void get_path_collection_extents(agg::trans_affine &master_transform,
                                  agg::trans_affine &offset_trans,
                                  extent_limits &extent)
 {
-    if (offsets.dim(0) != 0 && offsets.dim(1) != 2) {
+    if (offsets.size() != 0 && offsets.dim(1) != 2) {
         throw "Offsets array must be Nx2";
     }
 
@@ -375,13 +409,13 @@ void get_path_collection_extents(agg::trans_affine &master_transform,
     for (i = 0; i < N; ++i) {
         typename PathGenerator::path_iterator path(paths(i % Npaths));
         if (Ntransforms) {
-            typename TransformArray::sub_t subtrans = transforms[i % Ntransforms];
-            trans = agg::trans_affine(subtrans(0, 0),
-                                      subtrans(1, 0),
-                                      subtrans(0, 1),
-                                      subtrans(1, 1),
-                                      subtrans(0, 2),
-                                      subtrans(1, 2));
+            size_t ti = i % Ntransforms;
+            trans = agg::trans_affine(transforms(ti, 0, 0),
+                                      transforms(ti, 1, 0),
+                                      transforms(ti, 0, 1),
+                                      transforms(ti, 1, 1),
+                                      transforms(ti, 0, 2),
+                                      transforms(ti, 1, 2));
         } else {
             trans = master_transform;
         }
@@ -416,7 +450,7 @@ void point_in_path_collection(double x,
         return;
     }
 
-    size_t Noffsets = offsets.dim(0);
+    size_t Noffsets = offsets.size();
     size_t N = std::max(Npaths, Noffsets);
     size_t Ntransforms = std::min(transforms.size(), N);
     size_t i;
@@ -427,13 +461,13 @@ void point_in_path_collection(double x,
         typename PathGenerator::path_iterator path = paths(i % Npaths);
 
         if (Ntransforms) {
-            typename TransformArray::sub_t subtrans = transforms[i % Ntransforms];
-            trans = agg::trans_affine(subtrans(0, 0),
-                                      subtrans(1, 0),
-                                      subtrans(0, 1),
-                                      subtrans(1, 1),
-                                      subtrans(0, 2),
-                                      subtrans(1, 2));
+            size_t ti = i % Ntransforms;
+            trans = agg::trans_affine(transforms(ti, 0, 0),
+                                      transforms(ti, 1, 0),
+                                      transforms(ti, 0, 1),
+                                      transforms(ti, 1, 1),
+                                      transforms(ti, 0, 2),
+                                      transforms(ti, 1, 2));
             trans *= master_transform;
         } else {
             trans = master_transform;
@@ -496,8 +530,6 @@ bool path_in_path(PathIterator1 &a,
 
   http://en.wikipedia.org/wiki/Sutherland-Hodgman_clipping_algorithm
 */
-
-typedef std::vector<XY> Polygon;
 
 namespace clip_to_rect_filters
 {
@@ -684,19 +716,22 @@ clip_path_to_rect(PathIterator &path, agg::rect_d &rect, bool inside, std::vecto
 
         // Empty polygons aren't very useful, so skip them
         if (polygon1.size()) {
+            _finalize_polygon(results, 1);
             results.push_back(polygon1);
         }
     } while (code != agg::path_cmd_stop);
+
+    _finalize_polygon(results, 1);
 }
 
 template <class VerticesArray, class ResultArray>
 void affine_transform_2d(VerticesArray &vertices, agg::trans_affine &trans, ResultArray &result)
 {
-    if (vertices.dim(0) != 0 && vertices.dim(1) != 2) {
+    if (vertices.size() != 0 && vertices.dim(1) != 2) {
         throw "Invalid vertices array.";
     }
 
-    size_t n = vertices.dim(0);
+    size_t n = vertices.size();
     double x;
     double y;
     double t0;
@@ -761,8 +796,7 @@ int count_bboxes_overlapping_bbox(agg::rect_d &a, BBoxArray &bboxes)
 
     size_t num_bboxes = bboxes.size();
     for (size_t i = 0; i < num_bboxes; ++i) {
-        typename BBoxArray::sub_t bbox_b = bboxes[i];
-        b = agg::rect_d(bbox_b(0, 0), bbox_b(0, 1), bbox_b(1, 0), bbox_b(1, 1));
+        b = agg::rect_d(bboxes(i, 0, 0), bboxes(i, 0, 1), bboxes(i, 1, 0), bboxes(i, 1, 1));
 
         if (b.x2 < b.x1) {
             std::swap(b.x1, b.x2);
@@ -843,6 +877,7 @@ void convert_path_to_polygons(PathIterator &path,
                               agg::trans_affine &trans,
                               double width,
                               double height,
+                              int closed_only,
                               std::vector<Polygon> &result)
 {
     typedef agg::conv_transform<py::PathIterator> transformed_path_t;
@@ -856,7 +891,7 @@ void convert_path_to_polygons(PathIterator &path,
 
     transformed_path_t tpath(path, trans);
     nan_removal_t nan_removed(tpath, true, path.has_curves());
-    clipped_t clipped(nan_removed, do_clip, width, height);
+    clipped_t clipped(nan_removed, do_clip && !path.has_curves(), width, height);
     simplify_t simplified(clipped, simplify, path.simplify_threshold());
     curve_t curve(simplified);
 
@@ -867,14 +902,12 @@ void convert_path_to_polygons(PathIterator &path,
 
     while ((code = curve.vertex(&x, &y)) != agg::path_cmd_stop) {
         if ((code & agg::path_cmd_end_poly) == agg::path_cmd_end_poly) {
-            if (polygon->size() >= 1) {
-                polygon->push_back((*polygon)[0]);
-                result.push_back(Polygon());
-                polygon = &result.back();
-            }
+            _finalize_polygon(result, 1);
+            result.push_back(Polygon());
+            polygon = &result.back();
         } else {
-            if (code == agg::path_cmd_move_to && polygon->size() >= 1) {
-                polygon->push_back((*polygon)[0]);
+            if (code == agg::path_cmd_move_to) {
+                _finalize_polygon(result, closed_only);
                 result.push_back(Polygon());
                 polygon = &result.back();
             }
@@ -882,9 +915,7 @@ void convert_path_to_polygons(PathIterator &path,
         }
     }
 
-    if (polygon->size() == 0) {
-        result.pop_back();
-    }
+    _finalize_polygon(result, closed_only);
 }
 
 template <class VertexSource>
@@ -925,7 +956,7 @@ void cleanup_path(PathIterator &path,
 
     transformed_path_t tpath(path, trans);
     nan_removal_t nan_removed(tpath, remove_nans, path.has_curves());
-    clipped_t clipped(nan_removed, do_clip, rect);
+    clipped_t clipped(nan_removed, do_clip && !path.has_curves(), rect);
     snapped_t snapped(clipped, snap_mode, path.total_vertices(), stroke_width);
     simplify_t simplified(snapped, do_simplify, path.simplify_threshold());
 
@@ -1131,12 +1162,11 @@ int convert_to_string(PathIterator &path,
 
     transformed_path_t tpath(path, trans);
     nan_removal_t nan_removed(tpath, true, path.has_curves());
-    clipped_t clipped(nan_removed, do_clip, clip_rect);
+    clipped_t clipped(nan_removed, do_clip && !path.has_curves(), clip_rect);
     simplify_t simplified(clipped, simplify, path.simplify_threshold());
 
     *buffersize = path.total_vertices() * (precision + 5) * 4;
     if (*buffersize == 0) {
-        *buffer = NULL;
         return 0;
     }
 
@@ -1158,5 +1188,73 @@ int convert_to_string(PathIterator &path,
     }
 
 }
+
+template<class T>
+struct _is_sorted
+{
+    bool operator()(PyArrayObject *array)
+    {
+        npy_intp size;
+        npy_intp i;
+        T last_value;
+        T current_value;
+
+        size = PyArray_DIM(array, 0);
+
+        // std::isnan is only in C++11, which we don't yet require,
+        // so we use the the "self == self" trick
+        for (i = 0; i < size; ++i) {
+            last_value = *((T *)PyArray_GETPTR1(array, i));
+            if (last_value == last_value) {
+                break;
+            }
+        }
+
+        if (i == size) {
+            // The whole array is non-finite
+            return false;
+        }
+
+        for (; i < size; ++i) {
+            current_value = *((T *)PyArray_GETPTR1(array, i));
+            if (current_value == current_value) {
+                if (current_value < last_value) {
+                    return false;
+                }
+                last_value = current_value;
+            }
+        }
+
+        return true;
+    }
+};
+
+
+template<class T>
+struct _is_sorted_int
+{
+    bool operator()(PyArrayObject *array)
+    {
+        npy_intp size;
+        npy_intp i;
+        T last_value;
+        T current_value;
+
+        size = PyArray_DIM(array, 0);
+
+        last_value = *((T *)PyArray_GETPTR1(array, 0));
+
+        for (i = 1; i < size; ++i) {
+            current_value = *((T *)PyArray_GETPTR1(array, i));
+            if (current_value < last_value) {
+                return false;
+            }
+            last_value = current_value;
+        }
+
+        return true;
+    }
+};
+
 
 #endif

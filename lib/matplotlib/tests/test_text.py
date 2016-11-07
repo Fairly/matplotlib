@@ -1,13 +1,12 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 import warnings
 
 import numpy as np
 from numpy.testing import assert_almost_equal
 from nose.tools import eq_, assert_raises
-from nose.plugins.skip import SkipTest
 
 from matplotlib.transforms import Bbox
 import matplotlib
@@ -287,10 +286,6 @@ def test_get_rotation_int():
 
 def test_get_rotation_raises():
     from matplotlib import text
-    import sys
-    if sys.version_info[:2] < (2, 7):
-        raise SkipTest("assert_raises as context manager "
-                       "not supported with Python < 2.7")
     with assert_raises(ValueError):
         text.get_rotation('hozirontal')
 
@@ -369,3 +364,38 @@ def test_annotation_negative_fig_coords():
                 xytext=[-50, 100], textcoords='figure pixels',
                 xy=[-50, 100], xycoords='figure pixels', fontsize=32,
                 va='top')
+
+
+@cleanup
+def test_text_stale():
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    plt.draw_all()
+    assert not ax1.stale
+    assert not ax2.stale
+    assert not fig.stale
+
+    txt1 = ax1.text(.5, .5, 'aardvark')
+    assert ax1.stale
+    assert txt1.stale
+    assert fig.stale
+
+    ann1 = ax2.annotate('aardvark', xy=[.5, .5])
+    assert ax2.stale
+    assert ann1.stale
+    assert fig.stale
+
+    plt.draw_all()
+    assert not ax1.stale
+    assert not ax2.stale
+    assert not fig.stale
+
+
+@image_comparison(baseline_images=['agg_text_clip'],
+                  extensions=['png'])
+def test_agg_text_clip():
+    np.random.seed(1)
+    fig, (ax1, ax2) = plt.subplots(2)
+    for x, y in np.random.rand(10, 2):
+        ax1.text(x, y, "foo", clip_on=True)
+        ax2.text(x, y, "foo")
+    plt.show()

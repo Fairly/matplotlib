@@ -14,7 +14,7 @@ contains all the plot elements.  The following classes are defined
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import warnings
 from operator import itemgetter
@@ -32,13 +32,14 @@ import matplotlib.cbook as cbook
 
 from matplotlib.cbook import Stack, iterable
 
-from matplotlib import _image
+from matplotlib import image as mimage
 from matplotlib.image import FigureImage
 
 import matplotlib.colorbar as cbar
 
 from matplotlib.axes import Axes, SubplotBase, subplot_class_factory
 from matplotlib.blocking_input import BlockingMouseInput, BlockingKeyMouseInput
+from matplotlib.gridspec import GridSpec
 from matplotlib.legend import Legend
 from matplotlib.patches import Rectangle
 from matplotlib.projections import (get_projection_names,
@@ -168,23 +169,25 @@ class SubplotParams(object):
 
         The following attributes are available
 
-        *left*  : 0.125
+        left  : 0.125
             The left side of the subplots of the figure
 
-        *right* : 0.9
+        right : 0.9
             The right side of the subplots of the figure
 
-        *bottom* : 0.1
+        bottom : 0.1
             The bottom of the subplots of the figure
 
-        *top* : 0.9
+        top : 0.9
             The top of the subplots of the figure
 
-        *wspace* : 0.2
-            The amount of width reserved for blank space between subplots
+        wspace : 0.2
+            The amount of width reserved for blank space between subplots,
+            expressed as a fraction of the average axis width
 
-        *hspace* : 0.2
-            The amount of height reserved for white space between subplots
+        hspace : 0.2
+            The amount of height reserved for white space between subplots,
+            expressed as a fraction of the average axis height
         """
 
         self.validate = True
@@ -413,7 +416,7 @@ class Figure(Artist):
 
     def get_tight_layout(self):
         """
-        Return the Boolean flag, True to use :meth`tight_layout` when drawing.
+        Return the Boolean flag, True to use :meth:`tight_layout` when drawing.
         """
         return self._tight
 
@@ -510,17 +513,22 @@ class Figure(Artist):
         kwargs are :class:`matplotlib.text.Text` properties.  Using figure
         coordinates, the defaults are:
 
-          *x* : 0.5
+          x : 0.5
             The x location of the text in figure coords
 
-          *y* : 0.98
+          y : 0.98
             The y location of the text in figure coords
 
-          *horizontalalignment* : 'center'
+          horizontalalignment : 'center'
             The horizontal alignment of the text
 
-          *verticalalignment* : 'top'
+          verticalalignment : 'top'
             The vertical alignment of the text
+
+        If the `fontproperties` keyword argument is given then the
+        rcParams defaults for `fontsize` (`figure.titlesize`) and
+        `fontweight` (`figure.titleweight`) will be ignored in favour
+        of the `FontProperties` defaults.
 
         A :class:`matplotlib.text.Text` instance is returned.
 
@@ -536,10 +544,11 @@ class Figure(Artist):
         if ('verticalalignment' not in kwargs) and ('va' not in kwargs):
             kwargs['verticalalignment'] = 'top'
 
-        if 'fontsize' not in kwargs:
-            kwargs['fontsize'] = rcParams['figure.titlesize']
-        if 'fontweight' not in kwargs:
-            kwargs['fontweight'] = rcParams['figure.titleweight']
+        if 'fontproperties' not in kwargs:
+            if 'fontsize' not in kwargs and 'size' not in kwargs:
+                kwargs['size'] = rcParams['figure.titlesize']
+            if 'fontweight' not in kwargs and 'weight' not in kwargs:
+                kwargs['weight'] = rcParams['figure.titleweight']
 
         sup = self.text(x, y, t, **kwargs)
         if self._suptitle is not None:
@@ -560,7 +569,6 @@ class Figure(Artist):
         ACCEPTS: a FigureCanvas instance
         """
         self.canvas = canvas
-        self.stale = True
 
     def hold(self, b=None):
         """
@@ -668,7 +676,7 @@ class Figure(Artist):
         self.stale = True
         return im
 
-    def set_size_inches(self, w, h=None, forward=False):
+    def set_size_inches(self, w, h=None, forward=True):
         """
         set_size_inches(w,h, forward=False)
 
@@ -852,7 +860,7 @@ class Figure(Artist):
 
             rect = l,b,w,h
             fig.add_axes(rect)
-            fig.add_axes(rect, frameon=False, axisbg='g')
+            fig.add_axes(rect, frameon=False, facecolor='g')
             fig.add_axes(rect, polar=True)
             fig.add_axes(rect, projection='polar')
             fig.add_axes(ax)
@@ -917,7 +925,7 @@ class Figure(Artist):
 
         self._axstack.add(key, a)
         self.sca(a)
-        a._remove_method = lambda ax: self.delaxes(ax)
+        a._remove_method = self.__remove_ax
         self.stale = True
         a.stale_callback = _stale_figure_callback
         return a
@@ -933,7 +941,7 @@ class Figure(Artist):
             fig.add_subplot(1,1,1)
 
             # add subplot with red background
-            fig.add_subplot(212, axisbg='r')
+            fig.add_subplot(212, facecolor='r')
 
             # add a polar subplot
             fig.add_subplot(111, projection='polar')
@@ -1007,10 +1015,160 @@ class Figure(Artist):
 
         self._axstack.add(key, a)
         self.sca(a)
-        a._remove_method = lambda ax: self.delaxes(ax)
+        a._remove_method = self.__remove_ax
         self.stale = True
         a.stale_callback = _stale_figure_callback
         return a
+
+    def subplots(self, nrows=1, ncols=1, sharex=False, sharey=False,
+                 squeeze=True, subplot_kw=None, gridspec_kw=None):
+        """
+        Add a set of subplots to this figure.
+
+        Parameters
+        ----------
+        nrows, ncols : int, default: 1
+            Number of rows/cols of the subplot grid.
+
+        sharex, sharey : bool or {'none', 'all', 'row', 'col'}, default: False
+            Controls sharing of properties among x (`sharex`) or y (`sharey`)
+            axes:
+
+                - True or 'all': x- or y-axis will be shared among all
+                  subplots.
+                - False or 'none': each subplot x- or y-axis will be
+                  independent.
+                - 'row': each subplot row will share an x- or y-axis.
+                - 'col': each subplot column will share an x- or y-axis.
+
+            When subplots have a shared x-axis along a column, only the x tick
+            labels of the bottom subplot are visible.  Similarly, when
+            subplots have a shared y-axis along a row, only the y tick labels
+            of the first column subplot are visible.
+
+        squeeze : bool, default: True
+            - If True, extra dimensions are squeezed out from the returned
+              axis object:
+
+                - if only one subplot is constructed (nrows=ncols=1), the
+                  resulting single Axes object is returned as a scalar.
+                - for Nx1 or 1xN subplots, the returned object is a 1D numpy
+                  object array of Axes objects are returned as numpy 1D
+                  arrays.
+                - for NxM, subplots with N>1 and M>1 are returned as a 2D
+                  arrays.
+
+            - If False, no squeezing at all is done: the returned Axes object
+              is always a 2D array containing Axes instances, even if it ends
+              up being 1x1.
+
+        subplot_kw : dict, default: {}
+            Dict with keywords passed to the
+            :meth:`~matplotlib.figure.Figure.add_subplot` call used to create
+            each subplots.
+
+        gridspec_kw : dict, default: {}
+            Dict with keywords passed to the
+            :class:`~matplotlib.gridspec.GridSpec` constructor used to create
+            the grid the subplots are placed on.
+
+        Returns
+        -------
+        ax : single Axes object or array of Axes objects
+            The added axes.  The dimensions of the resulting array can be
+            controlled with the squeeze keyword, see above.
+
+        See Also
+        --------
+        pyplot.subplots : pyplot API; docstring includes examples.
+        """
+
+        # for backwards compatibility
+        if isinstance(sharex, bool):
+            sharex = "all" if sharex else "none"
+        if isinstance(sharey, bool):
+            sharey = "all" if sharey else "none"
+        share_values = ["all", "row", "col", "none"]
+        if sharex not in share_values:
+            # This check was added because it is very easy to type
+            # `subplots(1, 2, 1)` when `subplot(1, 2, 1)` was intended.
+            # In most cases, no error will ever occur, but mysterious behavior
+            # will result because what was intended to be the subplot index is
+            # instead treated as a bool for sharex.
+            if isinstance(sharex, int):
+                warnings.warn(
+                    "sharex argument to subplots() was an integer. "
+                    "Did you intend to use subplot() (without 's')?")
+
+            raise ValueError("sharex [%s] must be one of %s" %
+                             (sharex, share_values))
+        if sharey not in share_values:
+            raise ValueError("sharey [%s] must be one of %s" %
+                             (sharey, share_values))
+        if subplot_kw is None:
+            subplot_kw = {}
+        if gridspec_kw is None:
+            gridspec_kw = {}
+
+        gs = GridSpec(nrows, ncols, **gridspec_kw)
+
+        # Create array to hold all axes.
+        axarr = np.empty((nrows, ncols), dtype=object)
+        for row in range(nrows):
+            for col in range(ncols):
+                shared_with = {"none": None, "all": axarr[0, 0],
+                               "row": axarr[row, 0], "col": axarr[0, col]}
+                subplot_kw["sharex"] = shared_with[sharex]
+                subplot_kw["sharey"] = shared_with[sharey]
+                axarr[row, col] = self.add_subplot(gs[row, col], **subplot_kw)
+
+        # turn off redundant tick labeling
+        if sharex in ["col", "all"]:
+            # turn off all but the bottom row
+            for ax in axarr[:-1, :].flat:
+                for label in ax.get_xticklabels():
+                    label.set_visible(False)
+                ax.xaxis.offsetText.set_visible(False)
+        if sharey in ["row", "all"]:
+            # turn off all but the first column
+            for ax in axarr[:, 1:].flat:
+                for label in ax.get_yticklabels():
+                    label.set_visible(False)
+                ax.yaxis.offsetText.set_visible(False)
+
+        if squeeze:
+            # Discarding unneeded dimensions that equal 1.  If we only have one
+            # subplot, just return it instead of a 1-element array.
+            return axarr.item() if axarr.size == 1 else axarr.squeeze()
+        else:
+            # Returned axis array will be always 2-d, even if nrows=ncols=1.
+            return axarr
+
+    def __remove_ax(self, ax):
+        def _reset_loc_form(axis):
+            axis.set_major_formatter(axis.get_major_formatter())
+            axis.set_major_locator(axis.get_major_locator())
+            axis.set_minor_formatter(axis.get_minor_formatter())
+            axis.set_minor_locator(axis.get_minor_locator())
+
+        def _break_share_link(ax, grouper):
+            siblings = grouper.get_siblings(ax)
+            if len(siblings) > 1:
+                grouper.remove(ax)
+                for last_ax in siblings:
+                    if ax is last_ax:
+                        continue
+                    return last_ax
+            return None
+
+        self.delaxes(ax)
+        last_ax = _break_share_link(ax, ax._shared_y_axes)
+        if last_ax is not None:
+            _reset_loc_form(last_ax.yaxis)
+
+        last_ax = _break_share_link(ax, ax._shared_x_axes)
+        if last_ax is not None:
+            _reset_loc_form(last_ax.xaxis)
 
     def clf(self, keep_observers=False):
         """
@@ -1075,63 +1233,33 @@ class Figure(Artist):
         dsu = []
 
         for a in self.patches:
-            dsu.append((a.get_zorder(), a, a.draw, [renderer]))
+            dsu.append((a.get_zorder(), a))
 
         for a in self.lines:
-            dsu.append((a.get_zorder(), a, a.draw, [renderer]))
+            dsu.append((a.get_zorder(), a))
 
         for a in self.artists:
-            dsu.append((a.get_zorder(), a, a.draw, [renderer]))
+            dsu.append((a.get_zorder(), a))
 
-        # override the renderer default if self.suppressComposite
-        # is not None
-        not_composite = renderer.option_image_nocomposite()
-        if self.suppressComposite is not None:
-            not_composite = self.suppressComposite
-
-        if (len(self.images) <= 1 or not_composite or
-                not cbook.allequal([im.origin for im in self.images])):
-            for a in self.images:
-                dsu.append((a.get_zorder(), a, a.draw, [renderer]))
-        else:
-            # make a composite image blending alpha
-            # list of (_image.Image, ox, oy)
-            mag = renderer.get_image_magnification()
-            ims = [(im.make_image(mag), im.ox, im.oy, im.get_alpha())
-                   for im in self.images]
-
-            im = _image.from_images(int(self.bbox.height * mag),
-                                    int(self.bbox.width * mag),
-                                    ims)
-
-            im.is_grayscale = False
-            l, b, w, h = self.bbox.bounds
-
-            def draw_composite():
-                gc = renderer.new_gc()
-                gc.set_clip_rectangle(self.bbox)
-                gc.set_clip_path(self.get_clip_path())
-                renderer.draw_image(gc, l, b, im)
-                gc.restore()
-
-            dsu.append((self.images[0].get_zorder(), self.images[0],
-                        draw_composite, []))
+        for a in self.images:
+            dsu.append((a.get_zorder(), a))
 
         # render the axes
         for a in self.axes:
-            dsu.append((a.get_zorder(), a, a.draw, [renderer]))
+            dsu.append((a.get_zorder(), a))
 
         # render the figure text
         for a in self.texts:
-            dsu.append((a.get_zorder(), a, a.draw, [renderer]))
+            dsu.append((a.get_zorder(), a))
 
         for a in self.legends:
-            dsu.append((a.get_zorder(), a, a.draw, [renderer]))
+            dsu.append((a.get_zorder(), a))
 
         dsu = [row for row in dsu if not row[1].get_animated()]
         dsu.sort(key=itemgetter(0))
-        for zorder, a, func, args in dsu:
-            func(*args)
+
+        mimage._draw_list_compositing_images(
+            renderer, self, dsu, self.suppressComposite)
 
         renderer.close_group('figure')
         self.stale = False
@@ -1188,43 +1316,67 @@ class Figure(Artist):
 
         Keyword arguments:
 
-          *prop*: [ *None* | FontProperties | dict ]
+          prop: [ *None* | FontProperties | dict ]
             A :class:`matplotlib.font_manager.FontProperties`
             instance. If *prop* is a dictionary, a new instance will be
             created with *prop*. If *None*, use rc settings.
 
-          *numpoints*: integer
+          numpoints: integer
             The number of points in the legend line, default is 4
 
-          *scatterpoints*: integer
+          scatterpoints: integer
             The number of points in the legend line, default is 4
 
-          *scatteryoffsets*: list of floats
+          scatteryoffsets: list of floats
             a list of yoffsets for scatter symbols in legend
 
-          *markerscale*: [ *None* | scalar ]
+          markerscale: [ *None* | scalar ]
             The relative size of legend markers vs. original. If *None*, use rc
             settings.
 
-          *markerfirst*: [ *True* | *False* ]
+          markerfirst: [ *True* | *False* ]
             if *True*, legend marker is placed to the left of the legend label
             if *False*, legend marker is placed to the right of the legend
             label
 
-          *fancybox*: [ *None* | *False* | *True* ]
+          frameon: [ *None* | bool ]
+            Control whether the legend should be drawn on a patch (frame).
+            Default is *None* which will take the value from the
+            ``legend.frameon`` :data:`rcParam<matplotlib.rcParams>`.
+
+          fancybox: [ *None* | *False* | *True* ]
             if *True*, draw a frame with a round fancybox.  If *None*, use rc
 
-          *shadow*: [ *None* | *False* | *True* ]
+          shadow: [ *None* | *False* | *True* ]
             If *True*, draw a shadow behind legend. If *None*, use rc settings.
 
-          *ncol* : integer
+          framealpha: [ *None* | float ]
+            Control the alpha transparency of the legend's background.
+            Default is *None* which will take the value from the
+            ``legend.framealpha`` :data:`rcParam<matplotlib.rcParams>`.
+
+          facecolor: [ *None* | "inherit" | a color spec ]
+            Control the legend's background color.
+            Default is *None* which will take the value from the
+            ``legend.facecolor`` :data:`rcParam<matplotlib.rcParams>`.
+            If ``"inherit"``, it will take the ``axes.facecolor``
+            :data:`rcParam<matplotlib.rcParams>`.
+
+          edgecolor: [ *None* | "inherit" | a color spec ]
+            Control the legend's background patch edge color.
+            Default is *None* which will take the value from the
+            ``legend.edgecolor`` :data:`rcParam<matplotlib.rcParams>`.
+            If ``"inherit"``, it will take the ``axes.edgecolor``
+            :data:`rcParam<matplotlib.rcParams>`.
+
+          ncol : integer
             number of columns. default is 1
 
-          *mode* : [ "expand" | *None* ]
+          mode : [ "expand" | *None* ]
             if mode is "expand", the legend will be horizontally expanded
             to fill the axes area (or *bbox_to_anchor*)
 
-          *title* : string
+          title : string
             the legend title
 
         Padding and spacing between various elements use following keywords
@@ -1513,8 +1665,6 @@ class Figure(Artist):
         """
 
         kwargs.setdefault('dpi', rcParams['savefig.dpi'])
-        if kwargs['dpi'] == 'figure':
-            kwargs['dpi'] = self.get_dpi()
         frameon = kwargs.pop('frameon', rcParams['savefig.frameon'])
         transparent = kwargs.pop('transparent',
                                  rcParams['savefig.transparent'])
@@ -1604,11 +1754,6 @@ class Figure(Artist):
     def ginput(self, n=1, timeout=30, show_clicks=True, mouse_add=1,
                mouse_pop=3, mouse_stop=2):
         """
-        Call signature::
-
-          ginput(self, n=1, timeout=30, show_clicks=True,
-                 mouse_add=1, mouse_pop=3, mouse_stop=2)
-
         Blocking call to interact with the figure.
 
         This will wait for *n* clicks from the user and return a list of the
@@ -1643,10 +1788,6 @@ class Figure(Artist):
 
     def waitforbuttonpress(self, timeout=-1):
         """
-        Call signature::
-
-          waitforbuttonpress(self, timeout=-1)
-
         Blocking call to interact with the figure.
 
         This will return True is a key was pressed, False if a mouse
@@ -1699,13 +1840,13 @@ class Figure(Artist):
 
         Parameters:
 
-          *pad* : float
+          pad : float
             padding between the figure edge and the edges of subplots,
             as a fraction of the font-size.
-          *h_pad*, *w_pad* : float
+          h_pad, w_pad : float
             padding (height/width) between edges of adjacent subplots.
             Defaults to `pad_inches`.
-          *rect* : if rect is given, it is interpreted as a rectangle
+          rect : if rect is given, it is interpreted as a rectangle
             (left, bottom, right, top) in the normalized figure
             coordinate that the whole subplots area (including
             labels) will fit into. Default is (0, 0, 1, 1).
@@ -1759,7 +1900,7 @@ def figaspect(arg):
     Thanks to Fernando Perez for this function
     """
 
-    isarray = hasattr(arg, 'shape')
+    isarray = hasattr(arg, 'shape') and not np.isscalar(arg)
 
     # min/max sizes to respect when autoscaling.  If John likes the idea, they
     # could become rc parameters, for now they're hardwired.

@@ -1,6 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Fixing random state for reproducibility
+np.random.seed(19680801)
+
+
 dt = 0.0005
 t = np.arange(0.0, 20.0, dt)
 s1 = np.sin(2*np.pi*100*t)
@@ -25,6 +29,5 @@ Fs = int(1.0/dt)  # the sampling frequency
 ax1 = plt.subplot(211)
 plt.plot(t, x)
 plt.subplot(212, sharex=ax1)
-Pxx, freqs, bins, im = plt.specgram(x, NFFT=NFFT, Fs=Fs, noverlap=900,
-                                cmap=plt.cm.gist_heat)
+Pxx, freqs, bins, im = plt.specgram(x, NFFT=NFFT, Fs=Fs, noverlap=900)
 plt.show()

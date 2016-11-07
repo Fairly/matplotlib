@@ -1,9 +1,9 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
-from matplotlib.externals.six.moves import cPickle as pickle
-from matplotlib.externals.six.moves import xrange
+import six
+from six.moves import cPickle as pickle
+from six.moves import xrange
 
 from io import BytesIO
 
@@ -12,6 +12,7 @@ import numpy as np
 
 from matplotlib.testing.decorators import cleanup, image_comparison
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 
 
 def depth_getter(obj,
@@ -126,7 +127,6 @@ def test_simple():
     pickle.dump(fig, BytesIO(), pickle.HIGHEST_PROTOCOL)
 
 
-@cleanup
 @image_comparison(baseline_images=['multi_pickle'],
                   extensions=['png'], remove_text=True)
 def test_complete():
@@ -229,20 +229,6 @@ def test_image():
 
 
 @cleanup
-def test_grid():
-    from matplotlib.backends.backend_agg import new_figure_manager
-    manager = new_figure_manager(1000)
-    fig = manager.canvas.figure
-    ax = fig.add_subplot(1, 1, 1)
-    ax.grid()
-    # Drawing the grid triggers instance methods to be attached
-    # to the Line2D object (_lineFunc).
-    manager.canvas.draw()
-
-    pickle.dump(ax, BytesIO())
-
-
-@cleanup
 def test_polar():
     ax = plt.subplot(111, polar=True)
     fig = plt.gcf()
@@ -250,6 +236,38 @@ def test_polar():
     pf = pickle.dumps(fig)
     pickle.loads(pf)
     plt.draw()
+
+
+class TransformBlob(object):
+    def __init__(self):
+        self.identity = mtransforms.IdentityTransform()
+        self.identity2 = mtransforms.IdentityTransform()
+        # Force use of the more complex composition.
+        self.composite = mtransforms.CompositeGenericTransform(
+            self.identity,
+            self.identity2)
+        # Check parent -> child links of TransformWrapper.
+        self.wrapper = mtransforms.TransformWrapper(self.composite)
+        # Check child -> parent links of TransformWrapper.
+        self.composite2 = mtransforms.CompositeGenericTransform(
+            self.wrapper,
+            self.identity)
+
+
+def test_transform():
+    obj = TransformBlob()
+    pf = pickle.dumps(obj)
+    del obj
+
+    obj = pickle.loads(pf)
+    # Check parent -> child links of TransformWrapper.
+    assert_equal(obj.wrapper._child, obj.composite)
+    # Check child -> parent links of TransformWrapper.
+    assert_equal(
+        [v() for v in obj.wrapper._parents.values()], [obj.composite2])
+    # Check input and output dimensions are set as expected.
+    assert_equal(obj.wrapper.input_dims, obj.composite.input_dims)
+    assert_equal(obj.wrapper.output_dims, obj.composite.output_dims)
 
 
 if __name__ == '__main__':

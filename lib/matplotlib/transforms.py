@@ -32,27 +32,19 @@ themselves.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import numpy as np
-from numpy import ma
 from matplotlib._path import (affine_transform, count_bboxes_overlapping_bbox,
     update_path_extents)
 from numpy.linalg import inv
 
-from weakref import WeakValueDictionary
+import weakref
 import warnings
-try:
-    set
-except NameError:
-    from sets import Set as set
 
 from .path import Path
 
 DEBUG = False
-# we need this later, but this is very expensive to set up
-MINFLOAT = np.MachAr(float).xmin
-MaskedArray = ma.MaskedArray
 
 
 class TransformNode(object):
@@ -92,10 +84,7 @@ class TransformNode(object):
                              other than to improve the readability of
                              ``str(transform)`` when DEBUG=True.
         """
-        # Parents are stored in a WeakValueDictionary, so that if the
-        # parents are deleted, references from the children won't keep
-        # them alive.
-        self._parents = WeakValueDictionary()
+        self._parents = {}
 
         # TransformNodes start out as invalid until their values are
         # computed for the first time.
@@ -109,14 +98,17 @@ class TransformNode(object):
 
     def __getstate__(self):
         d = self.__dict__.copy()
-        # turn the weakkey dictionary into a normal dictionary
-        d['_parents'] = dict(six.iteritems(self._parents))
+        # turn the dictionary with weak values into a normal dictionary
+        d['_parents'] = dict((k, v()) for (k, v) in
+                             six.iteritems(self._parents))
         return d
 
     def __setstate__(self, data_dict):
         self.__dict__ = data_dict
-        # turn the normal dictionary back into a WeakValueDictionary
-        self._parents = WeakValueDictionary(self._parents)
+        # turn the normal dictionary back into a dictionary with weak
+        # values
+        self._parents = dict((k, weakref.ref(v)) for (k, v) in
+                             six.iteritems(self._parents) if v is not None)
 
     def __copy__(self, *args):
         raise NotImplementedError(
@@ -156,8 +148,11 @@ class TransformNode(object):
             self._invalid = value
 
             for parent in list(six.itervalues(self._parents)):
-                parent._invalidate_internal(value=value,
-                                            invalidating_node=self)
+                # Dereference the weak reference
+                parent = parent()
+                if parent is not None:
+                    parent._invalidate_internal(
+                        value=value, invalidating_node=self)
 
     def set_children(self, *children):
         """
@@ -166,8 +161,11 @@ class TransformNode(object):
         Should be called from the constructor of any transforms that
         depend on other transforms.
         """
+        # Parents are stored as weak references, so that if the
+        # parents are destroyed, references from the children won't
+        # keep them alive.
         for child in children:
-            child._parents[id(self)] = self
+            child._parents[id(self)] = weakref.ref(self)
 
     if DEBUG:
         _set_children = set_children
@@ -266,7 +264,7 @@ class BboxBase(TransformNode):
 
     if DEBUG:
         def _check(points):
-            if ma.isMaskedArray(points):
+            if isinstance(points, np.ma.MaskedArray):
                 warnings.warn("Bbox bounds are a masked array.")
             points = np.asarray(points)
             if (points[1, 0] - points[0, 0] == 0 or
@@ -666,7 +664,8 @@ class BboxBase(TransformNode):
 
         bboxes is a sequence of :class:`BboxBase` objects
         """
-        return count_bboxes_overlapping_bbox(self, [np.array(x) for x in bboxes])
+        return count_bboxes_overlapping_bbox(
+            self, np.atleast_3d([np.array(x) for x in bboxes]))
 
     def expanded(self, sw, sh):
         """
@@ -785,7 +784,7 @@ class Bbox(BboxBase):
         :meth:`from_bounds` and :meth:`from_extents`.
         """
         BboxBase.__init__(self, **kwargs)
-        points = np.asarray(points, np.float_)
+        points = np.asarray(points, float)
         if points.shape != (2, 2):
             raise ValueError('Bbox points must be of the form '
                              '"[[x0, y0], [x1, y1]]".')
@@ -813,7 +812,7 @@ class Bbox(BboxBase):
         (staticmethod) Create a new unit :class:`Bbox` from (0, 0) to
         (1, 1).
         """
-        return Bbox(np.array([[0.0, 0.0], [1.0, 1.0]], np.float))
+        return Bbox(np.array([[0.0, 0.0], [1.0, 1.0]], float))
 
     @staticmethod
     def null():
@@ -821,7 +820,7 @@ class Bbox(BboxBase):
         (staticmethod) Create a new null :class:`Bbox` from (inf, inf) to
         (-inf, -inf).
         """
-        return Bbox(np.array([[np.inf, np.inf], [-np.inf, -np.inf]], np.float))
+        return Bbox(np.array([[np.inf, np.inf], [-np.inf, -np.inf]], float))
 
     @staticmethod
     def from_bounds(x0, y0, width, height):
@@ -841,7 +840,7 @@ class Bbox(BboxBase):
 
         The *y*-axis increases upwards.
         """
-        points = np.array(args, dtype=np.float_).reshape(2, 2)
+        points = np.array(args, dtype=float).reshape(2, 2)
         return Bbox(points)
 
     def __format__(self, fmt):
@@ -995,7 +994,7 @@ class Bbox(BboxBase):
 
     def _set_bounds(self, bounds):
         l, b, w, h = bounds
-        points = np.array([[l, b], [l + w, b + h]], np.float_)
+        points = np.array([[l, b], [l + w, b + h]], float)
         if np.any(self._points != points):
             self._points = points
             self.invalidate()
@@ -1088,9 +1087,30 @@ class TransformedBbox(BboxBase):
 
     def get_points(self):
         if self._invalid:
-            points = self._transform.transform(self._bbox.get_points())
+            p = self._bbox.get_points()
+            # Transform all four points, then make a new bounding box
+            # from the result, taking care to make the orientation the
+            # same.
+            points = self._transform.transform(
+                [[p[0, 0], p[0, 1]],
+                 [p[1, 0], p[0, 1]],
+                 [p[0, 0], p[1, 1]],
+                 [p[1, 0], p[1, 1]]])
             points = np.ma.filled(points, 0.0)
-            self._points = points
+
+            xs = min(points[:, 0]), max(points[:, 0])
+            if p[0, 0] > p[1, 0]:
+                xs = xs[::-1]
+
+            ys = min(points[:, 1]), max(points[:, 1])
+            if p[0, 1] > p[1, 1]:
+                ys = ys[::-1]
+
+            self._points = np.array([
+                [xs[0], ys[0]],
+                [xs[1], ys[1]]
+            ])
+
             self._invalid = 0
         return self._points
     get_points.__doc__ = Bbox.get_points.__doc__
@@ -1533,6 +1553,10 @@ class TransformWrapper(Transform):
             msg = ("'child' must be an instance of"
                    " 'matplotlib.transform.Transform'")
             raise ValueError(msg)
+        self._init(child)
+        self.set_children(child)
+
+    def _init(self, child):
         Transform.__init__(self)
         self.input_dims = child.input_dims
         self.output_dims = child.output_dims
@@ -1547,13 +1571,29 @@ class TransformWrapper(Transform):
         def __str__(self):
             return str(self._child)
 
+    # NOTE: Transform.__[gs]etstate__ should be sufficient when using only
+    # Python 3.4+.
     def __getstate__(self):
-        # only store the child
-        return {'child': self._child}
+        # only store the child information and parents
+        return {
+            'child': self._child,
+            'input_dims': self.input_dims,
+            'output_dims': self.output_dims,
+            # turn the weak-values dictionary into a normal dictionary
+            'parents': dict((k, v()) for (k, v) in
+                            six.iteritems(self._parents))
+        }
 
     def __setstate__(self, state):
         # re-initialise the TransformWrapper with the state's child
-        self.__init__(state['child'])
+        self._init(state['child'])
+        # The child may not be unpickled yet, so restore its information.
+        self.input_dims = state['input_dims']
+        self.output_dims = state['output_dims']
+        # turn the normal dictionary back into a dictionary with weak
+        # values
+        self._parents = dict((k, weakref.ref(v)) for (k, v) in
+                             six.iteritems(state['parents']) if v is not None)
 
     def __repr__(self):
         return "TransformWrapper(%r)" % self._child
@@ -1564,7 +1604,6 @@ class TransformWrapper(Transform):
 
     def _set(self, child):
         self._child = child
-        self.set_children(child)
 
         self.transform = child.transform
         self.transform_affine = child.transform_affine
@@ -1593,6 +1632,7 @@ class TransformWrapper(Transform):
                    " output dimensions as the current child.")
             raise ValueError(msg)
 
+        self.set_children(child)
         self._set(child)
 
         self._invalid = 0
@@ -1718,13 +1758,13 @@ class Affine2DBase(AffineBase):
           b d f
           0 0 1
         """
-        return np.array([[a, c, e], [b, d, f], [0.0, 0.0, 1.0]], np.float_)
+        return np.array([[a, c, e], [b, d, f], [0.0, 0.0, 1.0]], float)
 
     def transform_affine(self, points):
         mtx = self.get_matrix()
-        if isinstance(points, MaskedArray):
+        if isinstance(points, np.ma.MaskedArray):
             tpoints = affine_transform(points.data, mtx)
-            return ma.MaskedArray(tpoints, mask=ma.getmask(points))
+            return np.ma.MaskedArray(tpoints, mask=np.ma.getmask(points))
         return affine_transform(points, mtx)
 
     def transform_point(self, point):
@@ -1739,8 +1779,7 @@ class Affine2DBase(AffineBase):
             # The major speed trap here is just converting to the
             # points to an array in the first place.  If we can use
             # more arrays upstream, that should help here.
-            if (not ma.isMaskedArray(points) and
-                not isinstance(points, np.ndarray)):
+            if not isinstance(points, (np.ma.MaskedArray, np.ndarray)):
                 warnings.warn(
                     ('A non-numpy array of type %s was passed in for ' +
                      'transformation.  Please correct this.')
@@ -1779,7 +1818,7 @@ class Affine2D(Affine2DBase):
         if matrix is None:
             matrix = np.identity(3)
         elif DEBUG:
-            matrix = np.asarray(matrix, np.float_)
+            matrix = np.asarray(matrix, float)
             assert matrix.shape == (3, 3)
         self._mtx = matrix
         self._invalid = 0
@@ -1807,8 +1846,7 @@ class Affine2D(Affine2DBase):
         .
         """
         return Affine2D(
-            np.array([a, c, e, b, d, f, 0.0, 0.0, 1.0], np.float_)
-            .reshape((3, 3)))
+            np.array([a, c, e, b, d, f, 0.0, 0.0, 1.0], float).reshape((3, 3)))
 
     def get_matrix(self):
         """
@@ -1877,9 +1915,8 @@ class Affine2D(Affine2DBase):
         """
         a = np.cos(theta)
         b = np.sin(theta)
-        rotate_mtx = np.array(
-            [[a, -b, 0.0], [b, a, 0.0], [0.0, 0.0, 1.0]],
-            np.float_)
+        rotate_mtx = np.array([[a, -b, 0.0], [b, a, 0.0], [0.0, 0.0, 1.0]],
+                              float)
         self._mtx = np.dot(rotate_mtx, self._mtx)
         self.invalidate()
         return self
@@ -1923,8 +1960,7 @@ class Affine2D(Affine2DBase):
         and :meth:`scale`.
         """
         translate_mtx = np.array(
-            [[1.0, 0.0, tx], [0.0, 1.0, ty], [0.0, 0.0, 1.0]],
-            np.float_)
+            [[1.0, 0.0, tx], [0.0, 1.0, ty], [0.0, 0.0, 1.0]], float)
         self._mtx = np.dot(translate_mtx, self._mtx)
         self.invalidate()
         return self
@@ -1943,8 +1979,7 @@ class Affine2D(Affine2DBase):
         if sy is None:
             sy = sx
         scale_mtx = np.array(
-            [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]],
-            np.float_)
+            [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]], float)
         self._mtx = np.dot(scale_mtx, self._mtx)
         self.invalidate()
         return self
@@ -1963,8 +1998,7 @@ class Affine2D(Affine2DBase):
         rotX = np.tan(xShear)
         rotY = np.tan(yShear)
         skew_mtx = np.array(
-                [[1.0, rotX, 0.0], [rotY, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                np.float_)
+            [[1.0, rotX, 0.0], [rotY, 1.0, 0.0], [0.0, 0.0, 1.0]], float)
         self._mtx = np.dot(skew_mtx, self._mtx)
         self.invalidate()
         return self
@@ -1990,7 +2024,7 @@ class Affine2D(Affine2DBase):
 
 class IdentityTransform(Affine2DBase):
     """
-    A special class that does on thing, the identity transform, in a
+    A special class that does one thing, the identity transform, in a
     fast way.
     """
     _mtx = np.identity(3)
@@ -2123,8 +2157,9 @@ class BlendedGenericTransform(Transform):
             y_points = y.transform_non_affine(points[:, 1])
             y_points = y_points.reshape((len(y_points), 1))
 
-        if isinstance(x_points, MaskedArray) or isinstance(y_points, MaskedArray):
-            return ma.concatenate((x_points, y_points), 1)
+        if (isinstance(x_points, np.ma.MaskedArray) or
+                isinstance(y_points, np.ma.MaskedArray)):
+            return np.ma.concatenate((x_points, y_points), 1)
         else:
             return np.concatenate((x_points, y_points), 1)
     transform_non_affine.__doc__ = Transform.transform_non_affine.__doc__
@@ -2490,9 +2525,9 @@ class BboxTransform(Affine2DBase):
             if DEBUG and (x_scale == 0 or y_scale == 0):
                 raise ValueError("Transforming from or to a singular bounding box.")
             self._mtx = np.array([[x_scale, 0.0    , (-inl*x_scale+outl)],
-                                   [0.0    , y_scale, (-inb*y_scale+outb)],
-                                   [0.0    , 0.0    , 1.0        ]],
-                                  np.float_)
+                                   [0.0   , y_scale, (-inb*y_scale+outb)],
+                                   [0.0   , 0.0    , 1.0        ]],
+                                 float)
             self._inverted = None
             self._invalid = 0
         return self._mtx
@@ -2530,9 +2565,9 @@ class BboxTransformTo(Affine2DBase):
             if DEBUG and (outw == 0 or outh == 0):
                 raise ValueError("Transforming to a singular bounding box.")
             self._mtx = np.array([[outw,  0.0, outl],
-                                   [ 0.0, outh, outb],
-                                   [ 0.0,  0.0,  1.0]],
-                                  np.float_)
+                                  [ 0.0, outh, outb],
+                                  [ 0.0,  0.0,  1.0]],
+                                  float)
             self._inverted = None
             self._invalid = 0
         return self._mtx
@@ -2556,7 +2591,7 @@ class BboxTransformToMaxOnly(BboxTransformTo):
             self._mtx = np.array([[xmax,  0.0, 0.0],
                                   [ 0.0, ymax, 0.0],
                                   [ 0.0,  0.0, 1.0]],
-                                 np.float_)
+                                 float)
             self._inverted = None
             self._invalid = 0
         return self._mtx
@@ -2591,9 +2626,9 @@ class BboxTransformFrom(Affine2DBase):
             x_scale = 1.0 / inw
             y_scale = 1.0 / inh
             self._mtx = np.array([[x_scale, 0.0    , (-inl*x_scale)],
-                                   [0.0    , y_scale, (-inb*y_scale)],
-                                   [0.0    , 0.0    , 1.0        ]],
-                                  np.float_)
+                                  [0.0    , y_scale, (-inb*y_scale)],
+                                  [0.0    , 0.0    , 1.0        ]],
+                                 float)
             self._inverted = None
             self._invalid = 0
         return self._mtx
@@ -2620,9 +2655,9 @@ class ScaledTranslation(Affine2DBase):
         if self._invalid:
             xt, yt = self._scale_trans.transform_point(self._t)
             self._mtx = np.array([[1.0, 0.0, xt],
-                                   [0.0, 1.0, yt],
-                                   [0.0, 0.0, 1.0]],
-                                  np.float_)
+                                  [0.0, 1.0, yt],
+                                  [0.0, 0.0, 1.0]],
+                                 float)
             self._invalid = 0
             self._inverted = None
         return self._mtx
@@ -2704,6 +2739,46 @@ class TransformedPath(TransformNode):
         return self._transform.get_affine()
 
 
+class TransformedPatchPath(TransformedPath):
+    """
+    A :class:`TransformedPatchPath` caches a non-affine transformed copy of
+    the :class:`~matplotlib.path.Patch`. This cached copy is automatically
+    updated when the non-affine part of the transform or the patch changes.
+    """
+    def __init__(self, patch):
+        """
+        Create a new :class:`TransformedPatchPath` from the given
+        :class:`~matplotlib.path.Patch`.
+        """
+        TransformNode.__init__(self)
+
+        transform = patch.get_transform()
+        self._patch = patch
+        self._transform = transform
+        self.set_children(transform)
+        self._path = patch.get_path()
+        self._transformed_path = None
+        self._transformed_points = None
+
+    def _revalidate(self):
+        patch_path = self._patch.get_path()
+        # Only recompute if the invalidation includes the non_affine part of
+        # the transform, or the Patch's Path has changed.
+        if (self._transformed_path is None or self._path != patch_path or
+                (self._invalid & self.INVALID_NON_AFFINE ==
+                    self.INVALID_NON_AFFINE)):
+            self._path = patch_path
+            self._transformed_path = \
+                self._transform.transform_path_non_affine(patch_path)
+            self._transformed_points = \
+                Path._fast_from_codes_and_verts(
+                    self._transform.transform_non_affine(patch_path.vertices),
+                    None,
+                    {'interpolation_steps': patch_path._interpolation_steps,
+                     'should_simplify': patch_path.should_simplify})
+        self._invalid = 0
+
+
 def nonsingular(vmin, vmax, expander=0.001, tiny=1e-15, increasing=True):
     '''
     Modify the endpoints of a range as needed to avoid singularities.
@@ -2739,7 +2814,7 @@ def nonsingular(vmin, vmax, expander=0.001, tiny=1e-15, increasing=True):
         swapped = True
 
     maxabsvalue = max(abs(vmin), abs(vmax))
-    if maxabsvalue < (1e6 / tiny) * MINFLOAT:
+    if maxabsvalue < (1e6 / tiny) * np.finfo(float).tiny:
         vmin = -expander
         vmax = expander
 

@@ -3,7 +3,7 @@ Introduction
 
 matplotlib is a library for making 2D plots of arrays in `Python
 <http://www.python.org>`_.  Although it has its origins in emulating
-the MATLAB |reg| [*]_ graphics commands, it is
+the MATLAB |reg| [#]_ graphics commands, it is
 independent of MATLAB, and can be used in a Pythonic, object oriented
 way.  Although matplotlib is written primarily in pure Python, it
 makes heavy use of `NumPy <http://www.numpy.org>`_ and other extension
@@ -73,14 +73,14 @@ backends: PS creates `PostScript®
 <http://www.adobe.com/products/postscript/>`_ hardcopy, SVG
 creates `Scalable Vector Graphics <http://www.w3.org/Graphics/SVG/>`_
 hardcopy, Agg creates PNG output using the high quality `Anti-Grain
-Geometry <http://agg.sourceforge.net/antigrain.com/index.html>`_
+Geometry <http://antigrain.com/>`_
 library that ships with matplotlib, GTK embeds matplotlib in a
 `Gtk+ <http://www.gtk.org/>`_
 application, GTKAgg uses the Anti-Grain renderer to create a figure
 and embed it in a Gtk+ application, and so on for `PDF
 <http://www.adobe.com/products/acrobat/adobepdf.html>`_, `WxWidgets
 <http://www.wxpython.org/>`_, `Tkinter
-<http://docs.python.org/lib/module-Tkinter.html>`_, etc.
+<https://docs.python.org/library/tkinter.html>`_, etc.
 
 matplotlib is used by many people in many different contexts.  Some
 people want to automatically generate PostScript files to send
@@ -91,6 +91,4 @@ from the Python shell in Tkinter on Windows™. My primary use is to
 embed matplotlib in a Gtk+ EEG application that runs on Windows, Linux
 and Macintosh OS X.
 
-.. [*] MATLAB is a registered trademark of The MathWorks, Inc.
-
-
+.. [#] MATLAB is a registered trademark of The MathWorks, Inc.

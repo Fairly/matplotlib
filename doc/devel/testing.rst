@@ -1,7 +1,8 @@
 .. _testing:
 
-Testing
-=======
+============================
+Developer's tips for testing
+============================
 
 Matplotlib has a testing infrastructure based on nose_, making it easy
 to write new tests. The tests are in :mod:`matplotlib.tests`, and
@@ -9,7 +10,7 @@ customizations to the nose testing infrastructure are in
 :mod:`matplotlib.testing`. (There is other old testing cruft around,
 please ignore it while we consolidate our testing to these locations.)
 
-.. _nose: http://nose.readthedocs.org/en/latest/
+.. _nose: https://nose.readthedocs.io/en/latest/
 
 Requirements
 ------------
@@ -17,62 +18,74 @@ Requirements
 The following software is required to run the tests:
 
   - nose_, version 1.0 or later
-
-  - `mock <http://www.voidspace.org.uk/python/mock/>`_, when running python
+  - `mock <https://docs.python.org/dev/library/unittest.mock.html>`_, when running python
     versions < 3.3
-
-  - `Ghostscript <http://pages.cs.wisc.edu/~ghost/>`_ (to render PDF
+  - `Ghostscript <http://www.ghostscript.com/>`_ (to render PDF
     files)
-
   - `Inkscape <http://inkscape.org>`_ (to render SVG files)
 
 Optionally you can install:
 
   - `coverage <http://nedbatchelder.com/code/coverage/>`_ to collect coverage
     information
+  - `pep8 <http://pep8.readthedocs.io/en/latest>`_ to test coding standards
 
-  - `pep8 <http://pep8.readthedocs.org/en/latest>`_ to test coding standards
+Building matplotlib for image comparison tests
+----------------------------------------------
+
+matplotlib's test suite makes heavy use of image comparison tests,
+meaning the result of a plot is compared against a known good result.
+Unfortunately, different versions of FreeType produce differently
+formed characters, causing these image comparisons to fail.  To make
+them reproducible, matplotlib can be built with a special local copy
+of FreeType.  This is recommended for all matplotlib developers.
+
+Add the following content to a ``setup.cfg`` file at the root of the
+matplotlib source directory::
+
+  [test]
+  local_freetype = True
+
+or by setting the ``MPLLOCALFREETYPE`` environmental variable to any true
+value.
 
 Running the tests
 -----------------
 
-Running the tests is simple. Make sure you have nose installed and run
-the setup script's ``test`` command::
+Running the tests is simple. Make sure you have nose installed and run::
 
-   python setup.py test
+   python tests.py
 
 in the root directory of the distribution. The script takes a set of
 commands, such as:
 
 ========================  ===========
-``--pep8-only``           pep8 checks
-``--omit-pep8``           Do not perform pep8 checks
-``--nocapture``           do not capture stdout (nosetests)
-``--nose-verbose``        be verbose (nosetests)
-``--processes``           number of processes (nosetests)
-``--process-timeout``     process timeout (nosetests)
-``--with-coverage``       with coverage
-``--detailed-error-msg``  detailed error message (nosetest)
-``--tests``               comma separated selection of tests (nosetest)
+``--pep8``                pep8 checks
+``--no-pep8``             Do not perform pep8 checks
+``--no-network``          Disable tests that require network access
 ========================  ===========
 
-Additionally it is possible to run only coding standard test or disable them:
+Additional arguments are passed on to nosetests. See the nose
+documentation for supported arguments. Some of the more important ones are given
+here:
 
-===================  ===========
-``--pep8``           run only PEP8 checks
-``--no-pep8``        disable PEP8 checks
-===================  ===========
+=============================  ===========
+``--verbose``                  Be more verbose
+``--processes=NUM``            Run tests in parallel over NUM processes
+``--process-timeout=SECONDS``  Set timeout for results from test runner process
+``--nocapture``                Do not capture stdout
+=============================  ===========
 
 To run a single test from the command line, you can provide a
 dot-separated path to the module followed by the function separated by
 a colon, e.g., (this is assuming the test is installed)::
 
-  python setup.py test --tests=matplotlib.tests.test_simplification:test_clipping
+  python tests.py matplotlib.tests.test_simplification:test_clipping
 
 If you want to run the full test suite, but want to save wall time try
 running the tests in parallel::
 
-  python setup.py test --nocapture --nose-verbose --processes=5 --process-timeout=300
+  python tests.py --nocapture --nose-verbose --processes=5 --process-timeout=300
 
 
 An alternative implementation that does not look at command line
@@ -84,12 +97,13 @@ matplotlib library function :func:`matplotlib.test`::
 
 .. hint::
 
-   You might need to install nose for this::
+   To run the tests you need to install nose and mock if using python 2.7::
 
       pip install nose
+      pip install mock
 
 
-.. _`nosetest arguments`: http://nose.readthedocs.org/en/latest/usage.html
+.. _`nosetest arguments`: http://nose.readthedocs.io/en/latest/usage.html
 
 
 Writing a simple test
@@ -185,17 +199,6 @@ decorator:
      If some variation is expected in the image between runs, this
      value may be adjusted.
 
-Freetype version
-----------------
-
-Due to subtle differences in the font rendering under different
-version of freetype some care must be taken when generating the
-baseline images.  Currently (early 2015), almost all of the images
-were generated using ``freetype 2.5.3-21`` on Fedora 21 and only the
-fonts that ship with ``matplotlib`` (regenerated in PR #4031 / commit
-005cfde02751d274f2ab8016eddd61c3b3828446) and travis is using
-``freetype 2.4.8`` on ubuntu.
-
 Known failing tests
 -------------------
 
@@ -265,7 +268,7 @@ Using tox
 
 `Tox <http://tox.testrun.org/>`_ is a tool for running tests against
 multiple Python environments, including multiple versions of Python
-(e.g., 2.6, 2.7, 3.2, etc.) and even different Python implementations
+(e.g., 2.7, 3.4, 3.5) and even different Python implementations
 altogether (e.g., CPython, PyPy, Jython, etc.)
 
 Testing all versions of Python (2.6, 2.7, 3.*) requires

@@ -1,6 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+# Fixing random state for reproducibility
+np.random.seed(19680801)
+
+
 x, y = np.random.randn(2, 100)
 fig = plt.figure()
 ax1 = fig.add_subplot(211)

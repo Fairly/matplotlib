@@ -53,7 +53,7 @@ code.  e.g.
 
 Fernando Perez has provided a nice top level method to create in
 :func:`~matplotlib.pyplots.subplots` (note the "s" at the end)
-everything at once, and turn off x and y sharing for the whole bunch.
+everything at once, and turn on x and y sharing for the whole bunch.
 You can either unpack the axes individually::
 
   # new style method 1; unpack the axes
@@ -118,7 +118,15 @@ you will see that the x tick labels are all squashed together.
 
    import matplotlib.cbook as cbook
    datafile = cbook.get_sample_data('goog.npy')
-   r = np.load(datafile).view(np.recarray)
+   try:
+       # Python3 cannot load python2 .npy files with datetime(object) arrays
+       # unless the encoding is set to bytes. Hovever this option was
+       # not added until numpy 1.10 so this example will only work with
+       # python 2 or with numpy 1.10 and later.
+       r = np.load(datafile, encoding='bytes').view(np.recarray)
+   except TypeError:
+       # Old Numpy
+       r = np.load(datafile).view(np.recarray)
    plt.figure()
    plt.plot(r.date, r.close)
    plt.title('Default date handling can cause overlapping labels')
@@ -179,8 +187,14 @@ right.
 
    # load up some sample financial data
    datafile = cbook.get_sample_data('goog.npy')
-   r = np.load(datafile).view(np.recarray)
-
+   try:
+       # Python3 cannot load python2 .npy files with datetime(object) arrays
+       # unless the encoding is set to bytes. Hovever this option was
+       # not added until numpy 1.10 so this example will only work with
+       # python 2 or with numpy 1.10 and later.
+       r = np.load(datafile, encoding='bytes').view(np.recarray)
+   except TypeError:
+       r = np.load(datafile).view(np.recarray)
    # create two subplots with the shared x and y axes
    fig, (ax1, ax2) = plt.subplots(1,2, sharex=True, sharey=True)
 
@@ -241,7 +255,7 @@ alpha channel is useful, not just aesthetic.
    # plot it!
    fig, ax = plt.subplots(1)
    ax.plot(t, mu1, lw=2, label='mean population 1', color='blue')
-   ax.plot(t, mu1, lw=2, label='mean population 2', color='yellow')
+   ax.plot(t, mu2, lw=2, label='mean population 2', color='yellow')
    ax.fill_between(t, mu1+sigma1, mu1-sigma1, facecolor='blue', alpha=0.5)
    ax.fill_between(t, mu2+sigma2, mu2-sigma2, facecolor='yellow', alpha=0.5)
    ax.set_title('random walkers empirical $\mu$ and $\pm \sigma$ interval')
@@ -363,4 +377,3 @@ argument takes a dictionary with keys that are Patch properties.
    # place a text box in upper left in axes coords
    ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=14,
            verticalalignment='top', bbox=props)
-

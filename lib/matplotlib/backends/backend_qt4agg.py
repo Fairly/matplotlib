@@ -4,7 +4,7 @@ Render to qt from agg
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import os  # not used
 import sys
@@ -15,7 +15,7 @@ import matplotlib
 from matplotlib.figure import Figure
 
 
-from .backend_qt5agg import FigureCanvasQTAggBase
+from .backend_qt5agg import FigureCanvasQTAggBase as _FigureCanvasQTAggBase
 
 from .backend_agg import FigureCanvasAgg
 from .backend_qt4 import QtCore
@@ -54,6 +54,11 @@ def new_figure_manager_given_figure(num, figure):
     return FigureManagerQT(canvas, num)
 
 
+class FigureCanvasQTAggBase(_FigureCanvasQTAggBase):
+    def __init__(self, figure):
+        self._agg_draw_pending = False
+
+
 class FigureCanvasQTAgg(FigureCanvasQTAggBase,
                         FigureCanvasQT, FigureCanvasAgg):
     """
@@ -72,7 +77,7 @@ class FigureCanvasQTAgg(FigureCanvasQTAggBase,
         FigureCanvasQTAggBase.__init__(self, figure)
         FigureCanvasAgg.__init__(self, figure)
         self._drawRect = None
-        self.blitbox = None
+        self.blitbox = []
         self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
 
 

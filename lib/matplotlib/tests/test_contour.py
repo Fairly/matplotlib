@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import datetime
 
@@ -9,6 +9,9 @@ import numpy as np
 from matplotlib import mlab
 from matplotlib.testing.decorators import cleanup, image_comparison
 from matplotlib import pyplot as plt
+from nose.tools import assert_equal, assert_raises
+from numpy.testing import assert_array_almost_equal
+import warnings
 
 import re
 
@@ -105,11 +108,10 @@ def test_contour_shape_mismatch_4():
     try:
         ax.contour(b, g, z)
     except TypeError as exc:
-        print(exc.args[0])
         assert re.match(
             r'Shape of x does not match that of z: ' +
             r'found \(9L?, 9L?\) instead of \(9L?, 10L?\)\.',
-            exc.args[0]) is not None
+            exc.args[0]) is not None, exc.args[0]
 
     try:
         ax.contour(g, b, z)
@@ -117,7 +119,7 @@ def test_contour_shape_mismatch_4():
         assert re.match(
             r'Shape of y does not match that of z: ' +
             r'found \(9L?, 9L?\) instead of \(9L?, 10L?\)\.',
-            exc.args[0]) is not None
+            exc.args[0]) is not None, exc.args[0]
 
 
 @cleanup
@@ -162,6 +164,19 @@ def test_contour_manual_labels():
     cs = plt.contour(x, y, z)
     pts = np.array([(1.5, 3.0), (1.5, 4.4), (1.5, 6.0)])
     plt.clabel(cs, manual=pts)
+
+
+@image_comparison(baseline_images=['contour_labels_size_color'],
+                  extensions=['png'], remove_text=True)
+def test_contour_manual_labels():
+
+    x, y = np.meshgrid(np.arange(0, 10), np.arange(0, 10))
+    z = np.max(np.dstack([abs(x), abs(y)]), 2)
+
+    plt.figure(figsize=(6, 2))
+    cs = plt.contour(x, y, z)
+    pts = np.array([(1.5, 3.0), (1.5, 4.4), (1.5, 6.0)])
+    plt.clabel(cs, manual=pts, fontsize='small', colors=('r', 'g'))
 
 
 @image_comparison(baseline_images=['contour_manual_colors_and_levels'],
@@ -262,6 +277,50 @@ def test_corner_mask():
     for corner_mask in [False, True]:
         fig = plt.figure()
         plt.contourf(z, corner_mask=corner_mask)
+
+
+@cleanup
+def test_contourf_decreasing_levels():
+    # github issue 5477.
+    z = [[0.1, 0.3], [0.5, 0.7]]
+    plt.figure()
+    assert_raises(ValueError, plt.contourf, z, [1.0, 0.0])
+    # Legacy contouring algorithm gives a warning rather than raising an error,
+    # plus a DeprecationWarning.
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        plt.contourf(z, [1.0, 0.0], corner_mask='legacy')
+        assert_equal(len(w), 2)
+
+
+@cleanup
+def test_vminvmax_warning():
+    z = [[0.1, 0.3], [0.5, 0.7]]
+    plt.figure()
+    cs = plt.contourf(z, [0.0, 1.0])
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cs.vmin
+        assert len(w) == 1
+        msg = "vmin is deprecated and will be removed in 2.2 "
+        assert str(w[0].message).startswith(msg)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cs.vmax
+        assert len(w) == 1
+        msg = "vmax is deprecated and will be removed in 2.2 "
+        assert str(w[0].message).startswith(msg)
+
+
+@cleanup
+def test_contourf_symmetric_locator():
+    # github issue 7271
+    z = np.arange(12).reshape((3, 4))
+    locator = plt.MaxNLocator(nbins=4, symmetric=True)
+    cs = plt.contourf(z, locator=locator)
+    assert_array_almost_equal(cs.levels, np.linspace(-12, 12, 5))
 
 
 if __name__ == '__main__':

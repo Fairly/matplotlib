@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import numpy as np
 from .axes_divider import make_axes_locatable, Size, locatable_axes_factory
@@ -205,9 +205,9 @@ class RGBAxesBase(object):
         ny, nx = r.shape
         if not ((nx, ny) == g.shape == b.shape):
             raise ValueError('Input shapes do not match.'
-                             '\nr.shape = {}'
-                             '\ng.shape = {}'
-                             '\nb.shape = {}'
+                             '\nr.shape = {0}'
+                             '\ng.shape = {1}'
+                             '\nb.shape = {2}'
                              ''.format(r.shape, g.shape, b.shape))
 
         R = np.zeros([ny, nx, 3], dtype="d")

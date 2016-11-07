@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 The SpanSelector is a mouse widget to select a xmin/xmax range and plot the
 detail view of the selected region in the lower axes
@@ -7,8 +6,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import SpanSelector
 
+# Fixing random state for reproducibility
+np.random.seed(19680801)
+
 fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(211, axisbg='#FFFFCC')
+ax = fig.add_subplot(211, facecolor='#FFFFCC')
 
 x = np.arange(0.0, 5.0, 0.01)
 y = np.sin(2*np.pi*x) + 0.5*np.random.randn(len(x))

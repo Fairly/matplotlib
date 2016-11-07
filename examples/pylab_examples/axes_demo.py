@@ -1,6 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Fixing random state for reproducibility
+np.random.seed(19680801)
+
+
 # create some data to use for the plot
 dt = 0.001
 t = np.arange(0.0, 10.0, dt)
@@ -16,14 +20,14 @@ plt.ylabel('current (nA)')
 plt.title('Gaussian colored noise')
 
 # this is an inset axes over the main axes
-a = plt.axes([.65, .6, .2, .2], axisbg='y')
+a = plt.axes([.65, .6, .2, .2], facecolor='y')
 n, bins, patches = plt.hist(s, 400, normed=1)
 plt.title('Probability')
 plt.xticks([])
 plt.yticks([])
 
 # this is another inset axes over the main axes
-a = plt.axes([0.2, 0.6, .2, .2], axisbg='y')
+a = plt.axes([0.2, 0.6, .2, .2], facecolor='y')
 plt.plot(t[:len(r)], r)
 plt.title('Impulse response')
 plt.xlim(0, 0.2)

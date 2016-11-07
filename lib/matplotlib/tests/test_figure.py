@@ -1,13 +1,15 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
-from matplotlib.externals.six.moves import xrange
+import six
+from six.moves import xrange
 
 from nose.tools import assert_equal, assert_true
+from matplotlib import rcParams
 from matplotlib.testing.decorators import image_comparison, cleanup
 from matplotlib.axes import Axes
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 @cleanup
@@ -98,6 +100,17 @@ def test_suptitle():
     fig.suptitle('title', color='g', rotation='30')
 
 
+@cleanup
+def test_suptitle_fontproperties():
+    from matplotlib.font_manager import FontProperties
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    fps = FontProperties(size='large', weight='bold')
+    txt = fig.suptitle('fontprops title', fontproperties=fps)
+    assert_equal(txt.get_fontsize(), fps.get_size_in_points())
+    assert_equal(txt.get_weight(), fps.get_weight())
+
+
 @image_comparison(baseline_images=['alpha_background'],
                   # only test png and svg. The PDF output appears correct,
                   # but Ghostscript does not preserve the background color.
@@ -123,9 +136,10 @@ def test_too_many_figures():
     import warnings
 
     with warnings.catch_warnings(record=True) as w:
-        for i in range(22):
+        warnings.simplefilter("always")
+        for i in range(rcParams['figure.max_open_warning'] + 1):
             fig = plt.figure()
-    assert len(w) == 1
+        assert len(w) == 1
 
 
 def test_iterability_axes_argument():
@@ -189,6 +203,17 @@ def test_axes_remove():
         assert ax in fig.axes
     assert axes[-1, -1] not in fig.axes
     assert_equal(len(fig.axes), 3)
+
+
+def test_figaspect():
+    w, h = plt.figaspect(np.float64(2) / np.float64(1))
+    assert h / w == 2
+    w, h = plt.figaspect(2)
+    assert h / w == 2
+    w, h = plt.figaspect(np.zeros((1, 2)))
+    assert h / w == 0.5
+    w, h = plt.figaspect(np.zeros((2, 2)))
+    assert h / w == 1
 
 
 if __name__ == "__main__":

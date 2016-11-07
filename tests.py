@@ -9,50 +9,27 @@
 # See https://nose.readthedocs.org/ for a detailed description of
 # these options.
 
-import os
 import sys
-import time
 
-import matplotlib
-matplotlib.use('agg')
-
-import nose
-from matplotlib.testing.noseclasses import KnownFailure
-from matplotlib import default_test_modules
-
-from matplotlib import font_manager
-# Make sure the font caches are created before starting any possibly
-# parallel tests
-if font_manager._fmcache is not None:
-    while not os.path.exists(font_manager._fmcache):
-        time.sleep(0.5)
-
-plugins = [KnownFailure]
-
-# Nose doesn't automatically instantiate all of the plugins in the
-# child processes, so we have to provide the multiprocess plugin with
-# a list.
-from nose.plugins import multiprocess
-multiprocess._instantiate_plugins = plugins
-
-
-def run():
-    try:
-        import faulthandler
-    except ImportError:
-        pass
-    else:
-        faulthandler.enable()
-
-    nose.main(addplugins=[x() for x in plugins],
-              defaultTest=default_test_modules)
 
 if __name__ == '__main__':
+    from matplotlib import default_test_modules, test
+
+    extra_args = []
+
     if '--no-pep8' in sys.argv:
         default_test_modules.remove('matplotlib.tests.test_coding_standards')
         sys.argv.remove('--no-pep8')
     elif '--pep8' in sys.argv:
-        default_test_modules = ['matplotlib.tests.test_coding_standards']
+        default_test_modules[:] = ['matplotlib.tests.test_coding_standards']
         sys.argv.remove('--pep8')
+    if '--no-network' in sys.argv:
+        from matplotlib.testing import disable_internet
+        disable_internet.turn_off_internet()
+        extra_args.extend(['-a', '!network'])
+        sys.argv.remove('--no-network')
 
-    run()
+    print('Python byte-compilation optimization level: %d' % sys.flags.optimize)
+
+    success = test(argv=sys.argv + extra_args, switch_backend_warn=False)
+    sys.exit(not success)

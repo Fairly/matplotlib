@@ -6,10 +6,11 @@ from __future__ import (absolute_import, division, print_function,
 import io
 import re
 import numpy as np
-from matplotlib.externals import six
+import six
 
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib import patheffects
 from matplotlib.testing.decorators import cleanup, knownfailureif
 
 
@@ -24,20 +25,19 @@ needs_tex = knownfailureif(
 
 
 def _test_savefig_to_stringio(format='ps', use_log=False):
+    fig, ax = plt.subplots()
     buffers = [
         six.moves.StringIO(),
         io.StringIO(),
         io.BytesIO()]
 
-    plt.figure()
-
     if use_log:
-        plt.yscale('log')
+        ax.set_yscale('log')
 
-    plt.plot([1, 2], [1, 2])
-    plt.title("Déjà vu")
+    ax.plot([1, 2], [1, 2])
+    ax.set_title("Déjà vu")
     for buffer in buffers:
-        plt.savefig(buffer, format=format)
+        fig.savefig(buffer, format=format)
 
     values = [x.getvalue() for x in buffers]
 
@@ -71,6 +71,7 @@ def test_savefig_to_stringio_with_distiller():
 
 @cleanup
 @needs_tex
+@needs_ghostscript
 def test_savefig_to_stringio_with_usetex():
     matplotlib.rcParams['text.latex.unicode'] = True
     matplotlib.rcParams['text.usetex'] = True
@@ -90,6 +91,7 @@ def test_savefig_to_stringio_eps_afm():
 
 @cleanup
 @needs_tex
+@needs_ghostscript
 def test_savefig_to_stringio_with_usetex_eps():
     matplotlib.rcParams['text.latex.unicode'] = True
     matplotlib.rcParams['text.usetex'] = True
@@ -119,6 +121,57 @@ def test_composite_image():
         ps.seek(0)
         buff = ps.read()
         assert buff.count(six.b(' colorimage')) == 2
+
+
+@cleanup
+def test_patheffects():
+    with matplotlib.rc_context():
+        matplotlib.rcParams['path.effects'] = [
+            patheffects.withStroke(linewidth=4, foreground='w')]
+        fig, ax = plt.subplots()
+        ax.plot([1, 2, 3])
+        with io.BytesIO() as ps:
+            fig.savefig(ps, format='ps')
+
+
+@cleanup
+@needs_tex
+@needs_ghostscript
+def test_tilde_in_tempfilename():
+    # Tilde ~ in the tempdir path (e.g. TMPDIR, TMP oder TEMP on windows
+    # when the username is very long and windows uses a short name) breaks
+    # latex before https://github.com/matplotlib/matplotlib/pull/5928
+    import tempfile
+    import shutil
+    import os
+    import os.path
+
+    tempdir = None
+    old_tempdir = tempfile.tempdir
+    try:
+        # change the path for new tempdirs, which is used
+        # internally by the ps backend to write a file
+        tempdir = tempfile.mkdtemp()
+        base_tempdir = os.path.join(tempdir, "short~1")
+        os.makedirs(base_tempdir)
+        tempfile.tempdir = base_tempdir
+
+        # usetex results in the latex call, which does not like the ~
+        plt.rc('text', usetex=True)
+        plt.plot([1, 2, 3, 4])
+        plt.xlabel(r'\textbf{time} (s)')
+        #matplotlib.verbose.set_level("debug")
+        output_eps = os.path.join(base_tempdir, 'tex_demo.eps')
+        # use the PS backend to write the file...
+        plt.savefig(output_eps, format="ps")
+    finally:
+        tempfile.tempdir = old_tempdir
+        if tempdir:
+            try:
+                shutil.rmtree(tempdir)
+            except Exception as e:
+                # do not break if this is not removeable...
+                print(e)
 
 
 if __name__ == '__main__':

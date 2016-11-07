@@ -1,15 +1,19 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
+import copy
 
-from matplotlib.externals import six
+import six
 
 import numpy as np
+
+from numpy.testing import assert_array_equal
 
 from matplotlib.path import Path
 from matplotlib.patches import Polygon
 from nose.tools import assert_raises, assert_equal
 from matplotlib.testing.decorators import image_comparison
 import matplotlib.pyplot as plt
+from matplotlib import transforms
 
 
 def test_readonly_path():
@@ -27,8 +31,9 @@ def test_point_in_path():
 
     path = Path(verts2, closed=True)
     points = [(0.5, 0.5), (1.5, 0.5)]
-
-    assert np.all(path.contains_points(points) == [True, False])
+    ret = path.contains_points(points)
+    assert ret.dtype == 'bool'
+    assert np.all(ret == [True, False])
 
 
 def test_contains_points_negative_radius():
@@ -38,7 +43,6 @@ def test_contains_points_negative_radius():
     expected = [True, False, False]
     result = path.contains_points(points, radius=-0.5)
 
-    assert result.dtype == np.bool
     assert np.all(result == expected)
 
 
@@ -91,6 +95,8 @@ def test_make_compound_path_empty():
 
 @image_comparison(baseline_images=['xkcd'], remove_text=True)
 def test_xkcd():
+    np.random.seed(0)
+
     x = np.linspace(0, 2.0 * np.pi, 100.0)
     y = np.sin(x)
 
@@ -109,6 +115,72 @@ def test_marker_paths_pdf():
                  np.ones(N))
     plt.xlim(-1, N)
     plt.ylim(-1, 7)
+
+
+def test_path_no_doubled_point_in_to_polygon():
+    hand = np.array(
+        [[1.64516129, 1.16145833],
+         [1.64516129, 1.59375],
+         [1.35080645, 1.921875],
+         [1.375, 2.18229167],
+         [1.68548387, 1.9375],
+         [1.60887097, 2.55208333],
+         [1.68548387, 2.69791667],
+         [1.76209677, 2.56770833],
+         [1.83064516, 1.97395833],
+         [1.89516129, 2.75],
+         [1.9516129, 2.84895833],
+         [2.01209677, 2.76041667],
+         [1.99193548, 1.99479167],
+         [2.11290323, 2.63020833],
+         [2.2016129, 2.734375],
+         [2.25403226, 2.60416667],
+         [2.14919355, 1.953125],
+         [2.30645161, 2.36979167],
+         [2.39112903, 2.36979167],
+         [2.41532258, 2.1875],
+         [2.1733871, 1.703125],
+         [2.07782258, 1.16666667]])
+
+    (r0, c0, r1, c1) = (1.0, 1.5, 2.1, 2.5)
+
+    poly = Path(np.vstack((hand[:, 1], hand[:, 0])).T, closed=True)
+    clip_rect = transforms.Bbox([[r0, c0], [r1, c1]])
+    poly_clipped = poly.clip_to_bbox(clip_rect).to_polygons()[0]
+
+    assert np.all(poly_clipped[-2] != poly_clipped[-1])
+    assert np.all(poly_clipped[-1] == poly_clipped[0])
+
+
+def test_path_to_polygons():
+    data = [[10, 10], [20, 20]]
+    p = Path(data)
+
+    assert_array_equal(p.to_polygons(width=40, height=40), [])
+    assert_array_equal(p.to_polygons(width=40, height=40, closed_only=False),
+                       [data])
+    assert_array_equal(p.to_polygons(), [])
+    assert_array_equal(p.to_polygons(closed_only=False), [data])
+
+    data = [[10, 10], [20, 20], [30, 30]]
+    closed_data = [[10, 10], [20, 20], [30, 30], [10, 10]]
+    p = Path(data)
+
+    assert_array_equal(p.to_polygons(width=40, height=40), [closed_data])
+    assert_array_equal(p.to_polygons(width=40, height=40, closed_only=False),
+                       [data])
+    assert_array_equal(p.to_polygons(), [closed_data])
+    assert_array_equal(p.to_polygons(closed_only=False), [data])
+
+
+def test_path_deepcopy():
+    # Should not raise any error
+    verts = [[0, 0], [1, 1]]
+    codes = [Path.MOVETO, Path.LINETO]
+    path1 = Path(verts)
+    path2 = Path(verts, codes)
+    copy.deepcopy(path1)
+    copy.deepcopy(path2)
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ Tests specific to the patches module.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import numpy as np
 from numpy.testing import assert_array_equal
@@ -19,6 +19,9 @@ import matplotlib.patches as mpatches
 import matplotlib.collections as mcollections
 from matplotlib import path as mpath
 from matplotlib import transforms as mtrans
+
+import sys
+on_win = (sys.platform == 'win32')
 
 
 def test_Polygon_close():
@@ -249,8 +252,9 @@ def test_wedge_movement():
         assert_equal(getattr(w, attr), new_v)
 
 
+# png needs tol>=0.06, pdf tol>=1.617
 @image_comparison(baseline_images=['wedge_range'],
-                  remove_text=True)
+                  remove_text=True, tol=1.65 if on_win else 0)
 def test_wedge_range():
     ax = plt.axes()
 

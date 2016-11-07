@@ -6,9 +6,6 @@ See the `fontconfig pattern specification
 information.
 """
 
-# Author : Michael Droettboom <mdroe@stsci.edu>
-# License : matplotlib license (PSF compatible)
-
 # This class is defined here because it must be available in:
 #   - The old-style config framework (:file:`rcsetup.py`)
 #   - The traits-based config framework (:file:`mpltraits.py`)
@@ -22,7 +19,7 @@ information.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import re, sys
 from pyparsing import Literal, ZeroOrMore, \

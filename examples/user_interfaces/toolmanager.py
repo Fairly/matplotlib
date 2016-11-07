@@ -41,23 +41,24 @@ class ListTools(ToolBase):
         print("{0:12} {1:45}".format("Group", "Active"))
         print('-' * 80)
         for group, active in self.toolmanager.active_toggle.items():
-            print("{0:12} {1:45}".format(group, active))
+            print("{0:12} {1:45}".format(str(group), str(active)))
 
 
 class GroupHideTool(ToolToggleBase):
-    '''Hide lines with a given gid'''
+    '''Show lines with a given gid'''
     default_keymap = 'G'
-    description = 'Hide by gid'
+    description = 'Show by gid'
+    default_toggled = True
 
     def __init__(self, *args, **kwargs):
         self.gid = kwargs.pop('gid')
         ToolToggleBase.__init__(self, *args, **kwargs)
 
     def enable(self, *args):
-        self.set_lines_visibility(False)
+        self.set_lines_visibility(True)
 
     def disable(self, *args):
-        self.set_lines_visibility(True)
+        self.set_lines_visibility(False)
 
     def set_lines_visibility(self, state):
         gr_lines = []
@@ -75,7 +76,7 @@ plt.plot([3, 2, 1], gid='mygroup')
 
 # Add the custom tools that we created
 fig.canvas.manager.toolmanager.add_tool('List', ListTools)
-fig.canvas.manager.toolmanager.add_tool('Hide', GroupHideTool, gid='mygroup')
+fig.canvas.manager.toolmanager.add_tool('Show', GroupHideTool, gid='mygroup')
 
 
 # Add an existing tool to new group `foo`.
@@ -87,6 +88,6 @@ fig.canvas.manager.toolmanager.remove_tool('forward')
 
 # To add a custom tool to the toolbar at specific location inside
 # the navigation group
-fig.canvas.manager.toolbar.add_tool('Hide', 'navigation', 1)
+fig.canvas.manager.toolbar.add_tool('Show', 'navigation', 1)
 
 plt.show()

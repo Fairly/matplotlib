@@ -17,7 +17,12 @@ import matplotlib.path as path
 
 fig, ax = plt.subplots()
 
+# Fixing random state for reproducibility
+np.random.seed(19680801)
+
+
 # histogram our data with numpy
+
 data = np.random.randn(1000)
 n, bins = np.histogram(data, 50)
 
@@ -36,8 +41,7 @@ XY = np.array([[left, left, right, right], [bottom, top, top, bottom]]).T
 barpath = path.Path.make_compound_path_from_polys(XY)
 
 # make a patch out of it
-patch = patches.PathPatch(
-    barpath, facecolor='blue', edgecolor='gray', alpha=0.8)
+patch = patches.PathPatch(barpath, facecolor='blue')
 ax.add_patch(patch)
 
 # update the view limits

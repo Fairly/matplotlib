@@ -2,19 +2,19 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import os
-import sys
 import shutil
 import tempfile
+from collections import OrderedDict
 from contextlib import contextmanager
 
-from nose import SkipTest
 from nose.tools import assert_raises
+from nose.plugins.attrib import attr
 
 import matplotlib as mpl
 from matplotlib import style
 from matplotlib.style.core import USER_LIBRARY_PATHS, STYLE_EXTENSION
 
-from matplotlib.externals import six
+import six
 
 PARAM = 'image.cmap'
 VALUE = 'pink'
@@ -56,6 +56,7 @@ def test_use():
             assert mpl.rcParams[PARAM] == VALUE
 
 
+@attr('network')
 def test_use_url():
     with temp_style('test', DUMMY_SETTINGS):
         with style.context('https://gist.github.com/adrn/6590261/raw'):
@@ -119,12 +120,6 @@ def test_context_with_union_of_dict_and_namedstyle():
 
 
 def test_context_with_badparam():
-    if sys.version_info[:2] >= (2, 7):
-        from collections import OrderedDict
-    else:
-        m = "Test can only be run in Python >= 2.7 as it requires OrderedDict"
-        raise SkipTest(m)
-
     original_value = 'gray'
     other_value = 'blue'
     d = OrderedDict([(PARAM, original_value), ('badparam', None)])

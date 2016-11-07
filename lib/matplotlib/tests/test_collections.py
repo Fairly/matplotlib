@@ -4,18 +4,19 @@ Tests specific to the collections module.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import io
 
 from nose.tools import assert_equal
 import numpy as np
 from numpy.testing import assert_array_equal, assert_array_almost_equal
+from nose.plugins.skip import SkipTest
 
 import matplotlib.pyplot as plt
 import matplotlib.collections as mcollections
 import matplotlib.transforms as mtransforms
-from matplotlib.collections import EventCollection
+from matplotlib.collections import Collection, EventCollection
 from matplotlib.testing.decorators import cleanup, image_comparison
 
 
@@ -577,7 +578,7 @@ def test_regularpolycollection_scale():
 @cleanup
 def test_picking():
     fig, ax = plt.subplots()
-    col = ax.scatter([0], [0], [1000])
+    col = ax.scatter([0], [0], [1000], picker=True)
     fig.savefig(io.BytesIO(), dpi=fig.dpi)
 
     class MouseEvent(object):
@@ -595,6 +596,62 @@ def test_picking():
 def test_linestyle_single_dashes():
     plt.scatter([0, 1, 2], [0, 1, 2], linestyle=(0., [2., 2.]))
     plt.draw()
+
+
+@image_comparison(baseline_images=['size_in_xy'], remove_text=True,
+                  extensions=['png'])
+def test_size_in_xy():
+    fig, ax = plt.subplots()
+
+    widths, heights, angles = (10, 10), 10, 0
+    widths = 10, 10
+    coords = [(10, 10), (15, 15)]
+    e = mcollections.EllipseCollection(
+        widths, heights, angles,
+        units='xy',
+        offsets=coords,
+        transOffset=ax.transData)
+
+    ax.add_collection(e)
+
+    ax.set_xlim(0, 30)
+    ax.set_ylim(0, 30)
+
+
+@cleanup
+def test_pandas_indexing():
+    try:
+        import pandas as pd
+    except ImportError:
+        raise SkipTest("Pandas not installed")
+
+    # Should not fail break when faced with a
+    # non-zero indexed series
+    index = [11, 12, 13]
+    ec = fc = pd.Series(['red', 'blue', 'green'], index=index)
+    lw = pd.Series([1, 2, 3], index=index)
+    ls = pd.Series(['solid', 'dashed', 'dashdot'], index=index)
+    aa = pd.Series([True, False, True], index=index)
+
+    Collection(edgecolors=ec)
+    Collection(facecolors=fc)
+    Collection(linewidths=lw)
+    Collection(linestyles=ls)
+    Collection(antialiaseds=aa)
+
+
+@cleanup(style='default')
+def test_lslw_bcast():
+    col = mcollections.PathCollection([])
+    col.set_linestyles(['-', '-'])
+    col.set_linewidths([1, 2, 3])
+
+    assert col.get_linestyles() == [(None, None)] * 6
+    assert col.get_linewidths() == [1, 2, 3] * 2
+
+    col.set_linestyles(['-', '-', '-'])
+    assert col.get_linestyles() == [(None, None)] * 3
+    assert col.get_linewidths() == [1, 2, 3]
 
 
 if __name__ == '__main__':

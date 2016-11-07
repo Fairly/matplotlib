@@ -18,7 +18,7 @@ is recommended that the namespaces be kept separate, e.g.::
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
+import six
 
 import sys
 import warnings
@@ -29,8 +29,8 @@ import matplotlib
 import matplotlib.colorbar
 from matplotlib import style
 from matplotlib import _pylab_helpers, interactive
-from matplotlib.cbook import dedent, silent_list, is_string_like, is_numlike
-from matplotlib.cbook import _string_to_bool
+from matplotlib.cbook import (dedent, silent_list, is_string_like, is_numlike,
+                              _string_to_bool)
 from matplotlib import docstring
 from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.figure import Figure, figaspect
@@ -65,7 +65,7 @@ from .ticker import TickHelper, Formatter, FixedFormatter, NullFormatter,\
            Locator, IndexLocator, FixedLocator, NullLocator,\
            LinearLocator, LogLocator, AutoLocator, MultipleLocator,\
            MaxNLocator
-
+from matplotlib.backends import pylab_setup
 
 ## Backend detection ##
 def _backend_selection():
@@ -92,11 +92,15 @@ def _backend_selection():
         if not PyQt5.QtWidgets.qApp.startingUp():
             # The mainloop is running.
             rcParams['backend'] = 'qt5Agg'
-    elif ('gtk' in sys.modules
-            and backend not in ('GTK', 'GTKAgg', 'GTKCairo')
-            and 'gi.repository.GObject' not in sys.modules):
-        import gobject
-        if gobject.MainLoop().is_running():
+    elif ('gtk' in sys.modules and
+          backend not in ('GTK', 'GTKAgg', 'GTKCairo')):
+        if 'gi' in sys.modules:
+            from gi.repository import GObject
+            ml = GObject.MainLoop
+        else:
+            import gobject
+            ml = gobject.MainLoop
+        if ml().is_running():
             rcParams['backend'] = 'gtk' + 'Agg' * is_agg_backend
     elif 'Tkinter' in sys.modules and not backend == 'TkAgg':
         # import Tkinter
@@ -106,7 +110,6 @@ _backend_selection()
 
 ## Global ##
 
-from matplotlib.backends import pylab_setup
 _backend_mod, new_figure_manager, draw_if_interactive, _show = pylab_setup()
 
 _IP_REGISTERED = None
@@ -118,7 +121,8 @@ def install_repl_displayhook():
     Install a repl display hook so that any stale figure are automatically
     redrawn when control is returned to the repl.
 
-    This works with both IPython terminals and vanilla python shells.
+    This works with IPython terminals and kernels,
+    as well as vanilla python shells.
     """
     global _IP_REGISTERED
     global _INSTALL_FIG_OBSERVER
@@ -151,6 +155,13 @@ def install_repl_displayhook():
 
             _IP_REGISTERED = post_execute
             _INSTALL_FIG_OBSERVER = False
+
+            # trigger IPython's eventloop integration, if available
+            from IPython.core.pylabtools import backend2gui
+
+            ipython_gui_name = backend2gui.get(get_backend())
+            if ipython_gui_name:
+                ip.enable_gui(ipython_gui_name)
         else:
             _INSTALL_FIG_OBSERVER = True
 
@@ -388,7 +399,7 @@ def xkcd(scale=1, length=100, randomness=2):
     from matplotlib import patheffects
     context = rc_context()
     try:
-        rcParams['font.family'] = ['Humor Sans', 'Comic Sans MS']
+        rcParams['font.family'] = ['xkcd', 'Humor Sans', 'Comic Sans MS']
         rcParams['font.size'] = 14.0
         rcParams['path.sketch'] = (scale, length, randomness)
         rcParams['path.effects'] = [
@@ -399,7 +410,6 @@ def xkcd(scale=1, length=100, randomness=2):
         rcParams['grid.linewidth'] = 0.0
         rcParams['axes.grid'] = False
         rcParams['axes.unicode_minus'] = False
-        rcParams['axes.prop_cycle'] = cycler('color', ['b', 'r', 'c', 'm'])
         rcParams['axes.edgecolor'] = 'black'
         rcParams['xtick.major.size'] = 8
         rcParams['xtick.major.width'] = 3
@@ -560,7 +570,7 @@ def _auto_draw_if_interactive(fig, val):
     fig : Figure
         A figure object which is assumed to be associated with a canvas
     """
-    if val and matplotlib.is_interactive():
+    if val and matplotlib.is_interactive() and not fig.canvas.is_saving():
         fig.canvas.draw_idle()
 
 
@@ -662,33 +672,27 @@ def clf():
 
 
 def draw():
-    """
-    Redraw the current figure.
+    """Redraw the current figure.
 
-    This is used in interactive mode to update a figure that
-    has been altered using one or more plot object method calls;
-    it is not needed if figure modification is done entirely
-    with pyplot functions, if a sequence of modifications ends
-    with a pyplot function, or if matplotlib is in non-interactive
-    mode and the sequence of modifications ends with :func:`show` or
-    :func:`savefig`.
+    This is used in interactive mode to update a figure that has been
+    altered, but not automatically re-drawn.  This should be only rarely
+    needed, but there may be ways to modify the state of a figure with
+    out marking it as `stale`.  Please report these cases as bugs.
 
     A more object-oriented alternative, given any
     :class:`~matplotlib.figure.Figure` instance, :attr:`fig`, that
     was created using a :mod:`~matplotlib.pyplot` function, is::
 
-        fig.canvas.draw()
-
-
+        fig.canvas.draw_idle()
     """
-    get_current_fig_manager().canvas.draw()
+    get_current_fig_manager().canvas.draw_idle()
 
 
 @docstring.copy_dedent(Figure.savefig)
 def savefig(*args, **kwargs):
     fig = gcf()
     res = fig.savefig(*args, **kwargs)
-    draw()   # need this if 'transparent=True' to reset colors
+    fig.canvas.draw_idle()   # need this if 'transparent=True' to reset colors
     return res
 
 
@@ -833,28 +837,28 @@ def axes(*args, **kwargs):
 
     - ``axes()`` by itself creates a default full ``subplot(111)`` window axis.
 
-    - ``axes(rect, axisbg='w')`` where *rect* = [left, bottom, width,
-      height] in normalized (0, 1) units.  *axisbg* is the background
+    - ``axes(rect, facecolor='w')`` where *rect* = [left, bottom, width,
+      height] in normalized (0, 1) units.  *facecolor* is the background
       color for the axis, default white.
 
     - ``axes(h)`` where *h* is an axes instance makes *h* the current
       axis.  An :class:`~matplotlib.axes.Axes` instance is returned.
 
-    =======   ==============   ==============================================
-    kwarg     Accepts          Description
-    =======   ==============   ==============================================
-    axisbg    color            the axes background color
-    frameon   [True|False]     display the frame?
-    sharex    otherax          current axes shares xaxis attribute
-                               with otherax
-    sharey    otherax          current axes shares yaxis attribute
-                               with otherax
-    polar     [True|False]     use a polar axes?
-    aspect    [str | num]      ['equal', 'auto'] or a number.  If a number
-                               the ratio of x-unit/y-unit in screen-space.
-                               Also see
-                               :meth:`~matplotlib.axes.Axes.set_aspect`.
-    =======   ==============   ==============================================
+    =========   ==============   ==============================================
+    kwarg       Accepts          Description
+    =========   ==============   ==============================================
+    facecolor   color            the axes background color
+    frameon     [True|False]     display the frame?
+    sharex      otherax          current axes shares xaxis attribute
+                                 with otherax
+    sharey      otherax          current axes shares yaxis attribute
+                                 with otherax
+    polar       [True|False]     use a polar axes?
+    aspect      [str | num]      ['equal', 'auto'] or a number.  If a number
+                                 the ratio of x-unit/y-unit in screen-space.
+                                 Also see
+                                 :meth:`~matplotlib.axes.Axes.set_aspect`.
+    =========   ==============   ==============================================
 
     Examples:
 
@@ -915,7 +919,7 @@ def gca(**kwargs):
     current figure matching the given keyword args, or create one.
 
     Examples
-    ---------
+    --------
     To get the current polar axes on the current figure::
 
         plt.gca(projection='polar')
@@ -970,7 +974,7 @@ def subplot(*args, **kwargs):
           # first, the plot (and its axes) previously created, will be removed
           plt.subplot(211)
           plt.plot(range(12))
-          plt.subplot(212, axisbg='y') # creates 2nd subplot with yellow background
+          plt.subplot(212, facecolor='y') # creates 2nd subplot with yellow background
 
        If you do not want this behavior, use the
        :meth:`~matplotlib.figure.Figure.add_subplot` method or the
@@ -978,7 +982,7 @@ def subplot(*args, **kwargs):
 
     Keyword arguments:
 
-      *axisbg*:
+      *facecolor*:
         The background color of the subplot, which can be any valid
         color specifier.  See :mod:`matplotlib.colors` for more
         information.
@@ -1034,223 +1038,133 @@ def subplot(*args, **kwargs):
 
 
 def subplots(nrows=1, ncols=1, sharex=False, sharey=False, squeeze=True,
-                subplot_kw=None, gridspec_kw=None, **fig_kw):
+             subplot_kw=None, gridspec_kw=None, **fig_kw):
     """
-    Create a figure with a set of subplots already made.
+    Create a figure and a set of subplots
 
     This utility wrapper makes it convenient to create common layouts of
     subplots, including the enclosing figure object, in a single call.
 
-    Keyword arguments:
+    Parameters
+    ----------
+    nrows, ncols : int, optional, default: 1
+        Number of rows/columns of the subplot grid.
 
-      *nrows* : int
-        Number of rows of the subplot grid.  Defaults to 1.
+    sharex, sharey : bool or {'none', 'all', 'row', 'col'}, default: False
+        Controls sharing of properties among x (`sharex`) or y (`sharey`)
+        axes:
 
-      *ncols* : int
-        Number of columns of the subplot grid.  Defaults to 1.
+            - True or 'all': x- or y-axis will be shared among all
+              subplots.
+            - False or 'none': each subplot x- or y-axis will be
+              independent.
+            - 'row': each subplot row will share an x- or y-axis.
+            - 'col': each subplot column will share an x- or y-axis.
 
-      *sharex* : string or bool
-        If *True*, the X axis will be shared amongst all subplots.  If
-        *True* and you have multiple rows, the x tick labels on all but
-        the last row of plots will have visible set to *False*
-        If a string must be one of "row", "col", "all", or "none".
-        "all" has the same effect as *True*, "none" has the same effect
-        as *False*.
-        If "row", each subplot row will share a X axis.
-        If "col", each subplot column will share a X axis and the x tick
-        labels on all but the last row will have visible set to *False*.
+        When subplots have a shared x-axis along a column, only the x tick
+        labels of the bottom subplot are visible.  Similarly, when subplots
+        have a shared y-axis along a row, only the y tick labels of the first
+        column subplot are visible.
 
-      *sharey* : string or bool
-        If *True*, the Y axis will be shared amongst all subplots. If
-        *True* and you have multiple columns, the y tick labels on all but
-        the first column of plots will have visible set to *False*
-        If a string must be one of "row", "col", "all", or "none".
-        "all" has the same effect as *True*, "none" has the same effect
-        as *False*.
-        If "row", each subplot row will share a Y axis and the y tick
-        labels on all but the first column will have visible set to *False*.
-        If "col", each subplot column will share a Y axis.
+    squeeze : bool, optional, default: True
+        - If True, extra dimensions are squeezed out from the returned Axes
+          object:
 
-      *squeeze* : bool
-        If *True*, extra dimensions are squeezed out from the
-        returned axis object:
+            - if only one subplot is constructed (nrows=ncols=1), the
+              resulting single Axes object is returned as a scalar.
+            - for Nx1 or 1xN subplots, the returned object is a 1D numpy
+              object array of Axes objects are returned as numpy 1D arrays.
+            - for NxM, subplots with N>1 and M>1 are returned as a 2D arrays.
 
-        - if only one subplot is constructed (nrows=ncols=1), the
-          resulting single Axis object is returned as a scalar.
+        - If False, no squeezing at all is done: the returned Axes object is
+          always a 2D array containing Axes instances, even if it ends up
+          being 1x1.
 
-        - for Nx1 or 1xN subplots, the returned object is a 1-d numpy
-          object array of Axis objects are returned as numpy 1-d
-          arrays.
-
-        - for NxM subplots with N>1 and M>1 are returned as a 2d
-          array.
-
-        If *False*, no squeezing at all is done: the returned axis
-        object is always a 2-d array containing Axis instances, even if it
-        ends up being 1x1.
-
-      *subplot_kw* : dict
+    subplot_kw : dict, optional
         Dict with keywords passed to the
-        :meth:`~matplotlib.figure.Figure.add_subplot` call used to
-        create each subplots.
+        :meth:`~matplotlib.figure.Figure.add_subplot` call used to create each
+        subplot.
 
-      *gridspec_kw* : dict
+    gridspec_kw : dict, optional
         Dict with keywords passed to the
-        :class:`~matplotlib.gridspec.GridSpec` constructor used to create
-        the grid the subplots are placed on.
+        :class:`~matplotlib.gridspec.GridSpec` constructor used to create the
+        grid the subplots are placed on.
 
-      *fig_kw* : dict
+    fig_kw : dict, optional
         Dict with keywords passed to the :func:`figure` call.  Note that all
         keywords not recognized above will be automatically included here.
 
-    Returns:
+    Returns
+    -------
+    fig : :class:`matplotlib.figure.Figure` object
 
-    fig, ax : tuple
+    ax : Axes object or array of Axes objects.
 
-      - *fig* is the :class:`matplotlib.figure.Figure` object
-
-      - *ax* can be either a single axis object or an array of axis
-        objects if more than one subplot was created.  The dimensions
-        of the resulting array can be controlled with the squeeze
+        ax can be either a single :class:`matplotlib.axes.Axes` object or an
+        array of Axes objects if more than one subplot was created.  The
+        dimensions of the resulting array can be controlled with the squeeze
         keyword, see above.
 
-    Examples::
+    Examples
+    --------
+    First create some toy data:
 
-        x = np.linspace(0, 2*np.pi, 400)
-        y = np.sin(x**2)
+    >>> x = np.linspace(0, 2*np.pi, 400)
+    >>> y = np.sin(x**2)
 
-        # Just a figure and one subplot
-        f, ax = plt.subplots()
-        ax.plot(x, y)
-        ax.set_title('Simple plot')
+    Creates just a figure and only one subplot
 
-        # Two subplots, unpack the output array immediately
-        f, (ax1, ax2) = plt.subplots(1, 2, sharey=True)
-        ax1.plot(x, y)
-        ax1.set_title('Sharing Y axis')
-        ax2.scatter(x, y)
+    >>> fig, ax = plt.subplots()
+    >>> ax.plot(x, y)
+    >>> ax.set_title('Simple plot')
 
-        # Four polar axes
-        plt.subplots(2, 2, subplot_kw=dict(polar=True))
+    Creates two subplots and unpacks the output array immediately
 
-        # Share a X axis with each column of subplots
-        plt.subplots(2, 2, sharex='col')
+    >>> f, (ax1, ax2) = plt.subplots(1, 2, sharey=True)
+    >>> ax1.plot(x, y)
+    >>> ax1.set_title('Sharing Y axis')
+    >>> ax2.scatter(x, y)
 
-        # Share a Y axis with each row of subplots
-        plt.subplots(2, 2, sharey='row')
+    Creates four polar axes, and accesses them through the returned array
 
-        # Share a X and Y axis with all subplots
-        plt.subplots(2, 2, sharex='all', sharey='all')
-        # same as
-        plt.subplots(2, 2, sharex=True, sharey=True)
+    >>> fig, axes = plt.subplots(2, 2, subplot_kw=dict(polar=True))
+    >>> axes[0, 0].plot(x, y)
+    >>> axes[1, 1].scatter(x, y)
+
+    Share a X axis with each column of subplots
+
+    >>> plt.subplots(2, 2, sharex='col')
+
+    Share a Y axis with each row of subplots
+
+    >>> plt.subplots(2, 2, sharey='row')
+
+    Share both X and Y axes with all subplots
+
+    >>> plt.subplots(2, 2, sharex='all', sharey='all')
+
+    Note that this is the same as
+
+    >>> plt.subplots(2, 2, sharex=True, sharey=True)
+
+    See Also
+    --------
+    figure
+    subplot
     """
-    # for backwards compatibility
-    if isinstance(sharex, bool):
-        if sharex:
-            sharex = "all"
-        else:
-            sharex = "none"
-    if isinstance(sharey, bool):
-        if sharey:
-            sharey = "all"
-        else:
-            sharey = "none"
-    share_values = ["all", "row", "col", "none"]
-    if sharex not in share_values:
-        # This check was added because it is very easy to type
-        # `subplots(1, 2, 1)` when `subplot(1, 2, 1)` was intended.
-        # In most cases, no error will ever occur, but mysterious behavior will
-        # result because what was intended to be the subplot index is instead
-        # treated as a bool for sharex.
-        if isinstance(sharex, int):
-            warnings.warn("sharex argument to subplots() was an integer."
-                          " Did you intend to use subplot() (without 's')?")
-
-        raise ValueError("sharex [%s] must be one of %s" %
-                         (sharex, share_values))
-    if sharey not in share_values:
-        raise ValueError("sharey [%s] must be one of %s" %
-                         (sharey, share_values))
-    if subplot_kw is None:
-        subplot_kw = {}
-    if gridspec_kw is None:
-        gridspec_kw = {}
-
     fig = figure(**fig_kw)
-    gs = GridSpec(nrows, ncols, **gridspec_kw)
-
-    # Create empty object array to hold all axes.  It's easiest to make it 1-d
-    # so we can just append subplots upon creation, and then
-    nplots = nrows*ncols
-    axarr = np.empty(nplots, dtype=object)
-
-    # Create first subplot separately, so we can share it if requested
-    ax0 = fig.add_subplot(gs[0, 0], **subplot_kw)
-    axarr[0] = ax0
-
-    r, c = np.mgrid[:nrows, :ncols]
-    r = r.flatten() * ncols
-    c = c.flatten()
-    lookup = {
-            "none": np.arange(nplots),
-            "all": np.zeros(nplots, dtype=int),
-            "row": r,
-            "col": c,
-            }
-    sxs = lookup[sharex]
-    sys = lookup[sharey]
-
-    # Note off-by-one counting because add_subplot uses the MATLAB 1-based
-    # convention.
-    for i in range(1, nplots):
-        if sxs[i] == i:
-            subplot_kw['sharex'] = None
-        else:
-            subplot_kw['sharex'] = axarr[sxs[i]]
-        if sys[i] == i:
-            subplot_kw['sharey'] = None
-        else:
-            subplot_kw['sharey'] = axarr[sys[i]]
-        axarr[i] = fig.add_subplot(gs[i // ncols, i % ncols], **subplot_kw)
-
-    # returned axis array will be always 2-d, even if nrows=ncols=1
-    axarr = axarr.reshape(nrows, ncols)
-
-    # turn off redundant tick labeling
-    if sharex in ["col", "all"] and nrows > 1:
-        # turn off all but the bottom row
-        for ax in axarr[:-1, :].flat:
-            for label in ax.get_xticklabels():
-                label.set_visible(False)
-            ax.xaxis.offsetText.set_visible(False)
-
-    if sharey in ["row", "all"] and ncols > 1:
-        # turn off all but the first column
-        for ax in axarr[:, 1:].flat:
-            for label in ax.get_yticklabels():
-                label.set_visible(False)
-            ax.yaxis.offsetText.set_visible(False)
-
-    if squeeze:
-        # Reshape the array to have the final desired dimension (nrow,ncol),
-        # though discarding unneeded dimensions that equal 1.  If we only have
-        # one subplot, just return it instead of a 1-element array.
-        if nplots == 1:
-            ret = fig, axarr[0, 0]
-        else:
-            ret = fig, axarr.squeeze()
-    else:
-        # returned axis array will be always 2-d, even if nrows=ncols=1
-        ret = fig, axarr.reshape(nrows, ncols)
-
-    return ret
+    axs = fig.subplots(nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey,
+                       squeeze=squeeze, subplot_kw=subplot_kw,
+                       gridspec_kw=gridspec_kw)
+    return fig, axs
 
 
-def subplot2grid(shape, loc, rowspan=1, colspan=1, **kwargs):
+def subplot2grid(shape, loc, rowspan=1, colspan=1, fig=None, **kwargs):
     """
     Create a subplot in a grid.  The grid is specified by *shape*, at
     location of *loc*, spanning *rowspan*, *colspan* cells in each
-    direction.  The index for loc is 0-based. ::
+    direction.  The index for loc is 0-based.  The current figure will
+    be used unless *fig* is specified. ::
 
       subplot2grid(shape, loc, rowspan=1, colspan=1)
 
@@ -1261,7 +1175,9 @@ def subplot2grid(shape, loc, rowspan=1, colspan=1, **kwargs):
       subplot(subplotspec)
     """
 
-    fig = gcf()
+    if fig is None:
+        fig = gcf()
+
     s1, s2 = shape
     subplotspec = GridSpec(s1, s2).new_subplotspec(loc,
                                                    rowspan=rowspan,
@@ -1326,8 +1242,10 @@ def subplots_adjust(*args, **kwargs):
       right = 0.9    # the right side of the subplots of the figure
       bottom = 0.1   # the bottom of the subplots of the figure
       top = 0.9      # the top of the subplots of the figure
-      wspace = 0.2   # the amount of width reserved for blank space between subplots
-      hspace = 0.2   # the amount of height reserved for white space between subplots
+      wspace = 0.2   # the amount of width reserved for blank space between subplots,
+                     # expressed as a fraction of the average axis width
+      hspace = 0.2   # the amount of height reserved for white space between subplots,
+                     # expressed as a fraction of the average axis height
 
     The actual defaults are controlled by the rc file
     """
@@ -1921,7 +1839,7 @@ def colors():
     The example below creates a subplot with a dark
     slate gray background::
 
-       subplot(111, axisbg=(0.1843, 0.3098, 0.3098))
+       subplot(111, facecolor=(0.1843, 0.3098, 0.3098))
 
     Here is an example that creates a pale turquoise title::
 
@@ -2077,11 +1995,9 @@ def colormaps():
 
     ColorBrewer Qualitative:
 
-    (For plotting nominal data, :class:`ListedColormap` should be used,
+    (For plotting nominal data, :class:`ListedColormap` is used,
     not :class:`LinearSegmentedColormap`.  Different sets of colors are
-    recommended for different numbers of categories.  These continuous
-    versions of the qualitative schemes may be removed or converted in the
-    future.)
+    recommended for different numbers of categories.)
 
     * Accent
     * Dark2
@@ -2148,15 +2064,14 @@ def colormaps():
     .. [#] Rainbow colormaps, ``jet`` in particular, are considered a poor
       choice for scientific visualization by many researchers: `Rainbow Color
       Map (Still) Considered Harmful
-      <http://www.jwave.vt.edu/%7Erkriz/Projects/create_color_table/color_07.pdf>`_
+      <http://ieeexplore.ieee.org/xpl/articleDetails.jsp?arnumber=4118486>`_
 
     .. [#] Resembles "BkBlAqGrYeOrReViWh200" from NCAR Command
       Language. See `Color Table Gallery
       <http://www.ncl.ucar.edu/Document/Graphics/color_table_gallery.shtml>`_
 
     .. [#] See `Diverging Color Maps for Scientific Visualization
-      <http://www.cs.unm.edu/~kmorel/documents/ColorMaps/>`_ by Kenneth
-      Moreland.
+      <http://www.kennethmoreland.com/color-maps/>`_ by Kenneth Moreland.
 
     .. [#] See `A Color Map for Effective Black-and-White Rendering of
       Color-Scale Images
@@ -3237,7 +3152,7 @@ def quiverkey(*args, **kw):
 # This function was autogenerated by boilerplate.py.  Do not edit as
 # changes will be lost
 @_autogen_docstring(Axes.scatter)
-def scatter(x, y, s=20, c=None, marker='o', cmap=None, norm=None, vmin=None,
+def scatter(x, y, s=None, c=None, marker=None, cmap=None, norm=None, vmin=None,
             vmax=None, alpha=None, linewidths=None, verts=None, edgecolors=None,
             hold=None, data=None, **kwargs):
     ax = gca()
@@ -3370,7 +3285,7 @@ def step(x, y, *args, **kwargs):
 @_autogen_docstring(Axes.streamplot)
 def streamplot(x, y, u, v, density=1, linewidth=None, color=None, cmap=None,
                norm=None, arrowsize=1, arrowstyle='-|>', minlength=0.1,
-               transform=None, zorder=1, start_points=None, hold=None, data=None):
+               transform=None, zorder=2, start_points=None, hold=None, data=None):
     ax = gca()
     # allow callers to override the hold state by passing hold=True|False
     washold = ax.ishold()

@@ -5,8 +5,8 @@ labelling for the axes class
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
-from matplotlib.externals.six.moves import xrange
+import six
+from six.moves import xrange
 
 import warnings
 import matplotlib as mpl
@@ -27,6 +27,7 @@ import matplotlib.mathtext as mathtext
 import matplotlib.patches as mpatches
 import matplotlib.texmanager as texmanager
 import matplotlib.transforms as mtrans
+from matplotlib.cbook import mplDeprecation
 
 # Import needed for adding manual selection capability to clabel
 from matplotlib.blocking_input import BlockingContourLabeler
@@ -182,19 +183,9 @@ class ContourLabeler(object):
         self.labelIndiceList = indices
 
         self.labelFontProps = font_manager.FontProperties()
-        if fontsize is None:
-            font_size = int(self.labelFontProps.get_size_in_points())
-        else:
-            if type(fontsize) not in [int, float, str]:
-                raise TypeError("Font size must be an integer number.")
-                # Can't it be floating point, as indicated in line above?
-            else:
-                if type(fontsize) == str:
-                    font_size = int(self.labelFontProps.get_size_in_points())
-                else:
-                    self.labelFontProps.set_size(fontsize)
-                    font_size = fontsize
-        self.labelFontSizeList = [font_size] * len(levels)
+        self.labelFontProps.set_size(fontsize)
+        font_size_pts = self.labelFontProps.get_size_in_points()
+        self.labelFontSizeList = [font_size_pts] * len(levels)
 
         if _colors is None:
             self.labelMappable = self
@@ -946,7 +937,8 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
                     edgecolors='none',
                     alpha=self.alpha,
                     transform=self.get_transform(),
-                    zorder=zorder)
+                    zorder=zorder,
+                    margins=False)
                 self.ax.add_collection(col, autolim=False)
                 self.collections.append(col)
         else:
@@ -967,7 +959,8 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
                     linestyles=[lstyle],
                     alpha=self.alpha,
                     transform=self.get_transform(),
-                    zorder=zorder)
+                    zorder=zorder,
+                    margins=False)
                 col.set_label('_nolegend_')
                 self.ax.add_collection(col, autolim=False)
                 self.collections.append(col)
@@ -1140,7 +1133,7 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
         # add label colors
         cm.ScalarMappable.changed(self)
 
-    def _autolev(self, z, N):
+    def _autolev(self, N):
         """
         Select contour levels to span the data.
 
@@ -1155,7 +1148,7 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
             if self.logscale:
                 self.locator = ticker.LogLocator()
             else:
-                self.locator = ticker.MaxNLocator(N + 1)
+                self.locator = ticker.MaxNLocator(N + 1, min_n_ticks=1)
         zmax = self.zmax
         zmin = self.zmin
         lev = self.locator.tick_values(zmin, zmax)
@@ -1176,12 +1169,12 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
         self._auto = False
         if self.levels is None:
             if len(args) == 0:
-                lev = self._autolev(z, 7)
+                lev = self._autolev(7)
             else:
                 level_arg = args[0]
                 try:
                     if type(level_arg) == int:
-                        lev = self._autolev(z, level_arg)
+                        lev = self._autolev(level_arg)
                     else:
                         lev = np.asarray(level_arg).astype(np.float64)
                 except:
@@ -1192,6 +1185,26 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
         if self.filled and len(self.levels) < 2:
             raise ValueError("Filled contours require at least 2 levels.")
 
+        if len(self.levels) > 1 and np.amin(np.diff(self.levels)) <= 0.0:
+            if hasattr(self, '_corner_mask') and self._corner_mask == 'legacy':
+                warnings.warn("Contour levels are not increasing")
+            else:
+                raise ValueError("Contour levels must be increasing")
+
+    @property
+    def vmin(self):
+        warnings.warn("vmin is deprecated and will be removed in 2.2 "
+                      "and not replaced.",
+                      mplDeprecation)
+        return getattr(self, '_vmin', None)
+
+    @property
+    def vmax(self):
+        warnings.warn("vmax is deprecated and will be removed in 2.2 "
+                      "and not replaced.",
+                      mplDeprecation)
+        return getattr(self, '_vmax', None)
+
     def _process_levels(self):
         """
         Assign values to :attr:`layers` based on :attr:`levels`,
@@ -1201,10 +1214,9 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
         a line is a thin layer.  No extended levels are needed
         with line contours.
         """
-        # The following attributes are no longer needed, and
-        # should be deprecated and removed to reduce confusion.
-        self.vmin = np.amin(self.levels)
-        self.vmax = np.amax(self.levels)
+        # following are deprecated and will be removed in 2.2
+        self._vmin = np.amin(self.levels)
+        self._vmax = np.amax(self.levels)
 
         # Make a private _levels to include extended regions; we
         # want to leave the original levels attribute unchanged.
@@ -1226,9 +1238,9 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
         # ...except that extended layers must be outside the
         # normed range:
         if self.extend in ('both', 'min'):
-            self.layers[0] = -np.inf
+            self.layers[0] = -1e150
         if self.extend in ('both', 'max'):
-            self.layers[-1] = np.inf
+            self.layers[-1] = 1e150
 
     def _process_colors(self):
         """
@@ -1337,11 +1349,6 @@ class ContourSet(cm.ScalarMappable, ContourLabeler):
         Returns a tuple containing the contour, segment, index of
         segment, x & y of segment point and distance to minimum point.
 
-        Call signature::
-
-          conmin,segmin,imin,xmin,ymin,dmin = find_nearest_contour(
-                     self, x, y, indices=None, pixel=True )
-
         Optional keyword arguments:
 
           *indices*:
@@ -1442,15 +1449,15 @@ class QuadContourSet(ContourSet):
             else:
                 contour_generator = args[0]._contour_generator
         else:
+            self._corner_mask = kwargs.get('corner_mask', None)
+            if self._corner_mask is None:
+                self._corner_mask = mpl.rcParams['contour.corner_mask']
+
             x, y, z = self._contour_args(args, kwargs)
 
             _mask = ma.getmask(z)
             if _mask is ma.nomask or not _mask.any():
                 _mask = None
-
-            self._corner_mask = kwargs.get('corner_mask', None)
-            if self._corner_mask is None:
-                self._corner_mask = mpl.rcParams['contour.corner_mask']
 
             if self._corner_mask == 'legacy':
                 cbook.warn_deprecated('1.5',
@@ -1535,12 +1542,12 @@ class QuadContourSet(ContourSet):
             raise TypeError("Too many arguments to %s; see help(%s)" %
                             (fn, fn))
         z = ma.masked_invalid(z, copy=False)
-        self.zmax = ma.maximum(z)
-        self.zmin = ma.minimum(z)
+        self.zmax = float(z.max())
+        self.zmin = float(z.min())
         if self.logscale and self.zmin <= 0:
             z = ma.masked_where(z <= 0, z)
             warnings.warn('Log scale: values of z <= 0 have been masked')
-            self.zmin = z.min()
+            self.zmin = float(z.min())
         self._contour_level_args(z, args)
         return (x, y, z)
 
@@ -1674,13 +1681,15 @@ class QuadContourSet(ContourSet):
           contour(Z,V)
           contour(X,Y,Z,V)
 
-        draw contour lines at the values specified in sequence *V*
+        draw contour lines at the values specified in sequence *V*,
+        which must be in increasing order.
 
         ::
 
           contourf(..., V)
 
-        fill the ``len(V)-1`` regions between the values in *V*
+        fill the ``len(V)-1`` regions between the values in *V*,
+        which must be in increasing order.
 
         ::
 
@@ -1743,8 +1752,8 @@ class QuadContourSet(ContourSet):
 
           *levels*: [level0, level1, ..., leveln]
             A list of floating point numbers indicating the level
-            curves to draw; e.g., to draw just the zero contour pass
-            ``levels=[0]``
+            curves to draw, in increasing order; e.g., to draw just
+            the zero contour pass ``levels=[0]``
 
           *origin*: [ *None* | 'upper' | 'lower' | 'image' ]
             If *None*, the first value of *Z* will correspond to the

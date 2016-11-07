@@ -9,6 +9,10 @@
  Books, Chapters and Articles
 =============================
 
+* `Mastering matplotlib
+  <https://www.packtpub.com/big-data-and-business-intelligence/mastering-matplotlib>`_
+  by Duncan M. McGreggor
+
 * `Interactive Applications Using Matplotlib
   <https://www.packtpub.com/application-development/interactive-applications-using-matplotlib>`_
   by Benjamin Root
@@ -46,6 +50,10 @@
 * `Anatomy of Matplotlib
   <https://conference.scipy.org/scipy2013/tutorial_detail.php?id=103>`_
   by Benjamin Root
+  
+* `Data Visualization Basics with Python (O'Reilly)
+  <http://shop.oreilly.com/product/0636920046592.do>`_
+  by Randal S. Olson
 
 ==========
  Tutorials
